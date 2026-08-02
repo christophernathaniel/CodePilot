@@ -59,6 +59,30 @@
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-ring: var(--sidebar-ring);
+
+    --color-code-canvas: #101720;
+    --color-code-panel: #17212c;
+    --color-code-raised: #202b38;
+    --color-code-hover: #283646;
+    --color-code-border: #344354;
+    --color-code-text: #e7edf3;
+    --color-code-muted: #a7b3c0;
+    --color-code-faint: #718092;
+    --color-code-accent: #8bc4e8;
+    --color-code-success: #8fc3a3;
+    --color-code-syntax-comment: #6f8295;
+    --color-code-syntax-keyword: #91b6f2;
+    --color-code-syntax-string: #a8c7d8;
+    --color-code-syntax-number: #9db8d1;
+    --color-code-syntax-function: #76c4dc;
+    --color-code-syntax-variable: #b4c4d4;
+    --color-code-syntax-tag: #80acd2;
+    --color-code-syntax-property: #a7bfe0;
+    --color-code-syntax-template: #8eafc9;
+    --color-code-syntax-operator: #8294a6;
+    --color-code-syntax-heading: #e7eef5;
+    --color-code-syntax-inserted: #90b9ac;
+    --color-code-syntax-deleted: #bd9aa2;
 }
 
 :root {
@@ -140,4 +164,31 @@
     body {
         @apply bg-background text-foreground;
     }
+}
+
+.snippet-workspace {
+    color-scheme: dark;
+}
+
+.snippet-workspace button:focus-visible,
+.snippet-workspace [role='button']:focus-visible {
+    outline: 1px solid var(--color-code-accent);
+    outline-offset: -1px;
+}
+
+.snippet-workspace * {
+    scrollbar-color: var(--color-code-border) transparent;
+    scrollbar-width: thin;
+}
+
+.snippet-workspace *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.snippet-workspace *::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: var(--color-code-border);
+    background-clip: padding-box;
 }

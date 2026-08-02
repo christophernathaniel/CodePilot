@@ -7,6 +7,7 @@ use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Carbon;
@@ -33,6 +34,48 @@ class User extends Authenticatable implements PasskeyUser
 {
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable, PasskeyAuthenticatable, TwoFactorAuthenticatable;
+
+    /** @return HasMany<Project, $this> */
+    public function projects(): HasMany
+    {
+        return $this->hasMany(Project::class);
+    }
+
+    /** @return HasMany<Snippet, $this> */
+    public function snippets(): HasMany
+    {
+        return $this->hasMany(Snippet::class);
+    }
+
+    /** @return HasMany<Tag, $this> */
+    public function tags(): HasMany
+    {
+        return $this->hasMany(Tag::class);
+    }
+
+    /** @return HasMany<Framework, $this> */
+    public function frameworks(): HasMany
+    {
+        return $this->hasMany(Framework::class);
+    }
+
+    /** @return HasMany<Pin, $this> */
+    public function pins(): HasMany
+    {
+        return $this->hasMany(Pin::class);
+    }
+
+    /** @return HasMany<SnippetCopyEvent, $this> */
+    public function snippetCopyEvents(): HasMany
+    {
+        return $this->hasMany(SnippetCopyEvent::class);
+    }
+
+    /** @return HasMany<SnippetVariation, $this> */
+    public function snippetVariations(): HasMany
+    {
+        return $this->hasMany(SnippetVariation::class, 'created_by_id');
+    }
 
     /**
      * Get the attributes that should be cast.

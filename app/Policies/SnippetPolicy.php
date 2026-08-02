@@ -1,0 +1,70 @@
+<?php
+
+namespace App\Policies;
+
+use App\Models\Snippet;
+use App\Models\User;
+
+class SnippetPolicy
+{
+    /**
+     * Determine whether the user can view any models.
+     */
+    public function viewAny(User $user): bool
+    {
+        return true;
+    }
+
+    /**
+     * Determine whether the user can view the model.
+     */
+    public function view(User $user, Snippet $snippet): bool
+    {
+        return $this->belongsToUser($snippet, $user);
+    }
+
+    /**
+     * Determine whether the user can create models.
+     */
+    public function create(User $user): bool
+    {
+        return true;
+    }
+
+    /**
+     * Determine whether the user can update the model.
+     */
+    public function update(User $user, Snippet $snippet): bool
+    {
+        return $this->belongsToUser($snippet, $user);
+    }
+
+    /**
+     * Determine whether the user can delete the model.
+     */
+    public function delete(User $user, Snippet $snippet): bool
+    {
+        return $this->belongsToUser($snippet, $user);
+    }
+
+    /**
+     * Determine whether the user can restore the model.
+     */
+    public function restore(User $user, Snippet $snippet): bool
+    {
+        return $this->belongsToUser($snippet, $user);
+    }
+
+    /**
+     * Determine whether the user can permanently delete the model.
+     */
+    public function forceDelete(User $user, Snippet $snippet): bool
+    {
+        return false;
+    }
+
+    private function belongsToUser(Snippet $snippet, User $user): bool
+    {
+        return $snippet->user_id === $user->id;
+    }
+}
