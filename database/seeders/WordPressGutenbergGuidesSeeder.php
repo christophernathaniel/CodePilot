@@ -10,7 +10,6 @@ use App\Support\Snippets\FrameworkCatalog;
 use App\Support\Snippets\SnippetLocation;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 
 class WordPressGutenbergGuidesSeeder extends Seeder
 {
@@ -27,6 +26,7 @@ class WordPressGutenbergGuidesSeeder extends Seeder
             $project = $this->guideProject($user);
             $framework = $user->frameworks()->where('slug', 'wordpress')->firstOrFail();
             $tags = $this->tags($user);
+            $project->frameworks()->syncWithoutDetaching([$framework->id]);
 
             foreach ($this->guides() as $position => $guide) {
                 $snippet = Snippet::query()->updateOrCreate(
@@ -62,6 +62,7 @@ class WordPressGutenbergGuidesSeeder extends Seeder
 
                 $snippet->frameworks()->syncWithoutDetaching([$framework->id]);
                 $snippet->tags()->sync(collect($guide['tags'])
+                    ->prepend('wordpress-vip')
                     ->prepend('guide')
                     ->prepend('wordpress')
                     ->prepend('accessibility')
@@ -78,14 +79,14 @@ class WordPressGutenbergGuidesSeeder extends Seeder
             ['name' => 'WordPress Gutenberg'],
             [
                 'kind' => 'guide',
-                'description' => 'Step-by-step WordPress 7.0 production guides with explicit WordPress 7.1 compatibility notes, accessibility checks, and enterprise/VIP guardrails.',
+                'description' => 'Step-by-step WordPress 7.0.2 production guides with explicit WordPress 7.1 compatibility notes, accessibility checks, and enterprise/VIP guardrails.',
                 'position' => ((int) $user->projects()->max('position')) + 1,
             ],
         );
 
         $project->update([
             'kind' => 'guide',
-            'description' => 'Step-by-step WordPress 7.0 production guides with explicit WordPress 7.1 compatibility notes, accessibility checks, and enterprise/VIP guardrails.',
+            'description' => 'Step-by-step WordPress 7.0.2 production guides with explicit WordPress 7.1 compatibility notes, accessibility checks, and enterprise/VIP guardrails.',
         ]);
 
         return $project;
@@ -147,16 +148,16 @@ class WordPressGutenbergGuidesSeeder extends Seeder
         return [
             'filename' => '01-docker-wordpress-gutenberg.guide.md',
             'title' => 'Docker, Gutenberg, Ollie and WP-CLI',
-            'description' => 'Build a reproducible WordPress 7.0 environment with WP-CLI, the Ollie block theme, Yoast SEO, and host-appropriate caching.',
+            'description' => 'Build a reproducible WordPress 7.0.2 environment with WP-CLI, the Ollie block theme, Yoast SEO, and host-appropriate caching.',
             'tags' => ['gutenberg', 'docker', 'wp-cli', 'block-theme', 'wordpress-vip', 'security'],
             'content' => <<<'GUIDE'
 {!# guide-step: baseline | Set the supported production baseline #!}
-Build production against WordPress 7.0.x. WordPress 7.1 is still a pre-release target until its scheduled 19 August 2026 release, so validate this stack against 7.1 release candidates separately before upgrading production. Use PHP 8.3 for a conservative modern baseline, pin container versions, and commit the Compose file rather than generated credentials.
+Build production against WordPress 7.0.2. WordPress 7.1 is still a pre-release target until its scheduled 19 August 2026 release, so validate this stack against 7.1 release candidates separately before upgrading production. Use PHP 8.3 for a conservative modern baseline, pin container versions, and commit the Compose file rather than generated credentials.
 
 The Gutenberg plugin is optional early-access software. Core already contains the stable block editor, so do not activate Gutenberg on production merely to obtain normal block editing.
 
 ```text
-Production: WordPress 7.0.x + PHP 8.3
+Production: WordPress 7.0.2 + PHP 8.3
 Compatibility lane: latest WordPress 7.1 release candidate
 Database: MariaDB 11.4 LTS
 Theme source: https://github.com/olliewp/ollie
@@ -172,7 +173,7 @@ WP_DB_USER=wordpress
 WP_DB_PASSWORD=local-wordpress-only
 WP_DB_ROOT_PASSWORD=local-root-only
 WP_SITE_URL=http://localhost:8080
-WP_SITE_TITLE=Gutenberg Theme Lab
+WP_SITE_TITLE="Gutenberg Theme Lab"
 WP_ADMIN_USER=editorial-admin
 WP_ADMIN_PASSWORD=replace-this-local-password
 WP_ADMIN_EMAIL=dev@example.test
@@ -207,7 +208,7 @@ services:
       retries: 20
 
   wordpress:
-    image: wordpress:7.0-php8.3-apache
+    image: wordpress:7.0.2-php8.3-apache
     restart: unless-stopped
     depends_on:
       database:
@@ -253,6 +254,9 @@ Start the services, wait until WordPress responds, then install only if it is no
 
 ```bash
 mkdir -p wp-content/themes wp-content/plugins wp-content/uploads
+set -a
+. ./.env
+set +a
 docker compose up -d
 docker compose run --rm wpcli core is-installed || docker compose run --rm wpcli core install \
   --url="$WP_SITE_URL" \
@@ -290,8 +294,9 @@ For a conventional production environment only:
 
 ```bash
 docker compose run --rm wpcli plugin activate wp-super-cache
-docker compose run --rm wpcli wp-super-cache enable
 ```
+
+Then choose **Simple** caching in Settings → WP Super Cache and verify the anonymous response; do not enable page caching merely because the plugin is installed.
 
 {!# guide-step: verify | Verify security, blocks, SEO, and accessibility #!}
 Confirm exact versions, remove unused defaults, and check that a keyboard-only user can reach the skip link, navigation, editor controls, and all interactive components. Test at 200% zoom, with reduced motion, and with meaningful image alternative text. Run the compatibility lane against WordPress 7.1 RC before upgrading.
@@ -380,8 +385,8 @@ Create `patterns/feature-callout.php`. Block themes automatically register valid
  * Viewport Width: 1280
  */
 ?>
-<!-- wp:group {"tagName":"section","metadata":{"name":"Feature callout"},"backgroundColor":"canvas","textColor":"ink","layout":{"type":"constrained"}} -->
-<section class="wp-block-group has-ink-color has-canvas-background-color has-text-color has-background">
+<!-- wp:group {"tagName":"section","className":"cn-feature-callout","metadata":{"name":"Feature callout"},"backgroundColor":"canvas","textColor":"ink","layout":{"type":"constrained"}} -->
+<section class="wp-block-group cn-feature-callout has-ink-color has-canvas-background-color has-text-color has-background">
     <!-- wp:heading {"fontSize":"display"} -->
     <h2 class="wp-block-heading has-display-font-size"><?php echo esc_html_x( 'Build clearer digital services', 'Pattern heading', 'cn-studio' ); ?></h2>
     <!-- /wp:heading -->
@@ -488,15 +493,16 @@ Keep source and generated output separate. Commit source; whether `build` is com
 cn-studio/
 ├── blocks/
 │   └── feature-notice/
-│       ├── block.json
-│       ├── edit.js
-│       ├── editor.css
-│       ├── index.js
-│       ├── render.php
-│       └── style.css
-├── build/
-├── functions.php
-└── package.json
+│       ├── build/
+│       ├── src/
+│       │   ├── block.json
+│       │   ├── edit.js
+│       │   ├── editor.scss
+│       │   ├── index.js
+│       │   ├── render.php
+│       │   └── style.scss
+│       └── package.json
+└── functions.php
 ```
 
 ```json
@@ -539,10 +545,10 @@ Use `block.json` as the single source of metadata. A namespaced block name preve
     "html": false,
     "spacing": { "margin": true, "padding": true }
   },
-  "editorScript": "file:../../build/feature-notice/index.js",
-  "editorStyle": "file:../../build/feature-notice/index.css",
-  "style": "file:../../build/feature-notice/style-index.css",
-  "render": "file:../../build/feature-notice/render.php"
+  "editorScript": "file:./index.js",
+  "editorStyle": "file:./index.css",
+  "style": "file:./style-index.css",
+  "render": "file:./render.php"
 }
 ```
 
@@ -623,7 +629,7 @@ Register blocks on `init`. In WordPress 7.0, metadata-based registration allows 
 ```php
 <?php
 add_action( 'init', static function (): void {
-    register_block_type( get_template_directory() . '/build/feature-notice' );
+    register_block_type( get_template_directory() . '/blocks/feature-notice/build' );
 } );
 ```
 
@@ -631,7 +637,7 @@ add_action( 'init', static function (): void {
 npm ci
 npm run build
 wp cache flush
-wp block list | grep 'cn-studio/feature-notice'
+wp eval 'var_export( WP_Block_Type_Registry::get_instance()->is_registered( "cn-studio/feature-notice" ) );'
 ```
 
 {!# guide-step: iframe | Keep code safe in the iframed editor #!}
@@ -875,3 +881,899 @@ wp cron event list | grep cn_editorial_sync || true
 GUIDE,
         ];
     }
+
+    /** @return array{filename: string, title: string, description: string, tags: list<string>, content: string} */
+    private function headlessGuide(): array
+    {
+        return [
+            'filename' => '05-headless-wordpress.guide.md',
+            'title' => 'Set up headless WordPress',
+            'description' => 'Use WordPress as the editorial CMS and a separate accessible front end with secure previews, SEO, and cache revalidation.',
+            'tags' => ['headless', 'rest-api', 'javascript', 'gutenberg', 'security'],
+            'content' => <<<'GUIDE'
+{!# guide-step: architecture | Define the headless boundary #!}
+This guide treats “headerless” as **headless WordPress**: WordPress remains the authenticated CMS and content authority, while a separate application renders the public site. Target WordPress 7.0.2 in production and run WordPress 7.1 compatibility separately until 7.1 is released.
+
+Choose explicitly how Gutenberg content will render. Rendering `content.rendered` preserves block markup but requires matching block/theme styles. Mapping parsed blocks into application components offers more control but increases compatibility work.
+
+```text
+Editors -> HTTPS -> WordPress admin
+Public browser -> CDN/frontend -> server-rendered application
+Frontend server -> WordPress REST API
+WordPress publish hook -> signed revalidation endpoint
+```
+
+{!# guide-step: wordpress | Prepare WordPress content for REST #!}
+Use public REST data for published content and require authentication for previews and private fields. Register custom post types and metadata with complete schemas. Do not disable the REST API globally because the block editor and other admin features depend on it.
+
+```php
+<?php
+add_action( 'init', static function (): void {
+    register_post_type(
+        'case_study',
+        array(
+            'label'        => __( 'Case studies', 'cn-headless' ),
+            'public'       => true,
+            'show_in_rest' => true,
+            'supports'     => array( 'title', 'editor', 'excerpt', 'thumbnail', 'revisions' ),
+        )
+    );
+
+    register_post_meta(
+        'case_study',
+        'client_summary',
+        array(
+            'type'              => 'string',
+            'single'            => true,
+            'show_in_rest'      => true,
+            'sanitize_callback' => 'sanitize_text_field',
+            'auth_callback'     => static fn (): bool => current_user_can( 'edit_posts' ),
+        )
+    );
+} );
+```
+
+{!# guide-step: frontend | Create the separate front-end application #!}
+Create a TypeScript application and keep the WordPress origin server-only where possible. The public REST origin can be exposed, but credentials and preview tokens must never be included in browser bundles.
+
+```bash
+npx create-next-app@latest cn-headless --typescript --eslint --app
+cd cn-headless
+printf 'WORDPRESS_URL=https://cms.example.com\n' > .env.local
+```
+
+```ts
+export type WordPressPost = {
+    id: number;
+    slug: string;
+    link: string;
+    title: { rendered: string };
+    excerpt: { rendered: string };
+    content: { rendered: string };
+    modified_gmt: string;
+};
+
+export async function getPosts(): Promise<WordPressPost[]> {
+    const origin = process.env.WORDPRESS_URL;
+
+    if (!origin) {
+        throw new Error('WORDPRESS_URL is not configured');
+    }
+
+    const url = new URL('/wp-json/wp/v2/posts', origin);
+    url.searchParams.set('_fields', 'id,slug,link,title,excerpt,content,modified_gmt');
+    url.searchParams.set('per_page', '20');
+
+    const response = await fetch(url, { next: { revalidate: 300 } });
+
+    if (!response.ok) {
+        throw new Error(`WordPress returned ${response.status}`);
+    }
+
+    return response.json();
+}
+```
+
+{!# guide-step: render | Render accessible routes and block content #!}
+Server-render the page so meaningful HTML exists before JavaScript. Preserve landmarks, one clear page heading, useful link names, responsive image dimensions and alternative text. If privileged authors can store unfiltered HTML, add an allow-list sanitizer before using rendered HTML.
+
+```tsx
+import { getPosts } from '@/lib/wordpress';
+
+export default async function HomePage() {
+    const posts = await getPosts();
+
+    return (
+        <main id="main-content">
+            <h1>Latest articles</h1>
+            {posts.length === 0 ? (
+                <p>No articles have been published yet.</p>
+            ) : (
+                <ul aria-label="Latest articles">
+                    {posts.map((post) => (
+                        <li key={post.id}>
+                            <article>
+                                <h2>
+                                    <a href={`/articles/${post.slug}`}>
+                                        <span dangerouslySetInnerHTML={{ __html: post.title.rendered }} />
+                                    </a>
+                                </h2>
+                                <div dangerouslySetInnerHTML={{ __html: post.excerpt.rendered }} />
+                            </article>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </main>
+    );
+}
+```
+
+Load the Core block stylesheet and the public styles from the theme or reproduce each supported block deliberately. Do not silently ship unstyled block markup.
+
+{!# guide-step: authentication | Keep preview authentication on the server #!}
+Create one revocable Application Password per integration over HTTPS. Store it in the deployment secret manager, never in a `NEXT_PUBLIC_` value. Cookie authentication plus a REST nonce is for same-origin logged-in WordPress screens; external server-to-server clients should use an Application Password or an approved authentication provider.
+
+```ts
+function wordpressAuthorization(): string {
+    const username = process.env.WORDPRESS_USERNAME;
+    const applicationPassword = process.env.WORDPRESS_APPLICATION_PASSWORD;
+
+    if (!username || !applicationPassword) {
+        throw new Error('WordPress preview credentials are not configured');
+    }
+
+    return `Basic ${Buffer.from(`${username}:${applicationPassword}`).toString('base64')}`;
+}
+
+export async function getPreview(postId: number) {
+    const response = await fetch(
+        `${process.env.WORDPRESS_URL}/wp-json/wp/v2/posts/${postId}?context=edit`,
+        { headers: { Authorization: wordpressAuthorization() }, cache: 'no-store' },
+    );
+
+    if (!response.ok) {
+        throw new Error(`Preview request failed with ${response.status}`);
+    }
+
+    return response.json();
+}
+```
+
+{!# guide-step: revalidate | Sign cache-revalidation requests #!}
+Publish and update hooks should send a short signed message to the front end. The receiver must compare the HMAC in constant time, reject stale timestamps, and revalidate only affected paths/tags. Queue or defer remote calls so saving content does not wait on a slow front end.
+
+```php
+<?php
+add_action( 'transition_post_status', static function ( string $new, string $old, WP_Post $post ): void {
+    if ( 'publish' !== $new || wp_is_post_revision( $post ) ) {
+        return;
+    }
+
+    wp_schedule_single_event(
+        time(),
+        'cn_headless_revalidate_post',
+        array( $post->ID )
+    );
+}, 10, 3 );
+```
+
+```php
+<?php
+add_action( 'cn_headless_revalidate_post', static function ( int $post_id ): void {
+    $payload   = wp_json_encode( array( 'postId' => $post_id, 'sentAt' => time() ) );
+    $secret    = (string) getenv( 'CN_REVALIDATION_SECRET' );
+    $signature = hash_hmac( 'sha256', $payload, $secret );
+
+    wp_remote_post(
+        'https://www.example.com/api/revalidate',
+        array(
+            'timeout'  => 3,
+            'blocking' => false,
+            'headers'  => array(
+                'Content-Type'   => 'application/json',
+                'X-CN-Signature' => $signature,
+            ),
+            'body'     => $payload,
+        )
+    );
+} );
+```
+
+{!# guide-step: seo | Rebuild the WordPress SEO contract #!}
+Headless removes the theme layer that normally prints canonical URLs, metadata and structured data. Preserve Yoast's canonical, robots, Open Graph and schema output through its REST data or a controlled server-side integration. Keep WordPress XML sitemaps or publish equivalent frontend sitemaps, and map legacy WordPress URLs to permanent redirects.
+
+```text
+- one canonical URL per public route
+- index/noindex follows WordPress editorial intent
+- XML sitemap URLs use the public frontend origin
+- media uses width/height, srcset, sizes, captions, and stored alt text
+- preview and draft routes are authenticated and noindex
+- redirect history survives slug changes
+```
+
+{!# guide-step: verify | Test the complete decoupled journey #!}
+Test the CMS and frontend as one system: publish, preview, update, unpublish, redirect, cache invalidation and failure recovery. Route changes in a client-rendered shell must update the document title, move or announce focus appropriately, and expose loading/error states without relying on colour alone.
+
+```bash
+curl --fail --silent 'https://cms.example.com/wp-json/wp/v2/posts?per_page=1&_fields=id,slug' | jq
+curl --fail --silent 'https://www.example.com/sitemap.xml' >/dev/null
+```
+
+```text
+- secrets exist only on trusted servers
+- every endpoint has bounded fields and pagination
+- preview never leaks drafts through shared caches
+- publish revalidates only affected routes
+- 404, empty, loading, and API-failure states are accessible
+- keyboard navigation, visible focus, zoom, and reduced motion pass WCAG 2.2 AA
+```
+GUIDE,
+        ];
+    }
+
+    /** @return array{filename: string, title: string, description: string, tags: list<string>, content: string} */
+    private function restApiGuide(): array
+    {
+        return [
+            'filename' => '06-custom-rest-api-endpoint.guide.md',
+            'title' => 'Create and consume a REST API endpoint',
+            'description' => 'Register versioned public and protected routes, validate arguments, and consume them with accessible JavaScript states.',
+            'tags' => ['rest-api', 'javascript', 'plugin-development', 'security'],
+            'content' => <<<'GUIDE'
+{!# guide-step: contract | Design the resource contract first #!}
+Target WordPress 7.0.2 stable and test in the WordPress 7.1 compatibility lane. Use a vendor/version namespace that you control, bound result sizes, and document which fields are public. This guide exposes published notices publicly and protects creation with the `edit_posts` capability.
+
+```json
+{
+  "namespace": "cn/v1",
+  "resource": "/notices",
+  "GET": "public, maximum 20 records",
+  "POST": "cookie + REST nonce or Application Password; edit_posts required"
+}
+```
+
+{!# guide-step: controller | Create a focused REST controller #!}
+Create a controller in a namespaced plugin. Register routes only on `rest_api_init`. Every route requires `permission_callback`; `__return_true` is correct only when the returned data is deliberately public.
+
+```php
+<?php
+namespace CN\Notices;
+
+final class Notices_Controller extends \WP_REST_Controller {
+    public function __construct() {
+        $this->namespace = 'cn/v1';
+        $this->rest_base = 'notices';
+    }
+
+    public function register_routes(): void {
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base,
+            array(
+                array(
+                    'methods'             => \WP_REST_Server::READABLE,
+                    'callback'            => array( $this, 'index' ),
+                    'permission_callback' => '__return_true',
+                    'args'                => $this->collection_params(),
+                ),
+                array(
+                    'methods'             => \WP_REST_Server::CREATABLE,
+                    'callback'            => array( $this, 'store' ),
+                    'permission_callback' => static fn (): bool => current_user_can( 'edit_posts' ),
+                    'args'                => $this->create_params(),
+                ),
+                'schema' => array( $this, 'get_public_item_schema' ),
+            )
+        );
+    }
+}
+```
+
+```php
+<?php
+add_action( 'init', static function (): void {
+    register_post_type(
+        'cn_notice',
+        array(
+            'label'        => __( 'Notices', 'cn-notices' ),
+            'public'       => false,
+            'show_ui'      => true,
+            'show_in_rest' => false,
+            'supports'     => array( 'title', 'editor', 'revisions' ),
+        )
+    );
+} );
+
+add_action( 'rest_api_init', static function (): void {
+    ( new \CN\Notices\Notices_Controller() )->register_routes();
+} );
+```
+
+{!# guide-step: schema | Validate and sanitize every accepted argument #!}
+Validation decides whether input is acceptable; sanitization normalises accepted input. Keep the public response schema explicit so clients can request `_fields` and discovery tools can understand the endpoint.
+
+```php
+<?php
+public function collection_params(): array {
+    return array(
+        'per_page' => array(
+            'description'       => __( 'Maximum number of notices.', 'cn-notices' ),
+            'type'              => 'integer',
+            'default'           => 10,
+            'minimum'           => 1,
+            'maximum'           => 20,
+            'sanitize_callback' => 'absint',
+        ),
+    );
+}
+
+public function create_params(): array {
+    return array(
+        'title' => array(
+            'description'       => __( 'Short notice heading.', 'cn-notices' ),
+            'type'              => 'string',
+            'required'          => true,
+            'minLength'         => 1,
+            'maxLength'         => 120,
+            'sanitize_callback' => 'sanitize_text_field',
+        ),
+        'message' => array(
+            'description'       => __( 'Plain-text notice message.', 'cn-notices' ),
+            'type'              => 'string',
+            'required'          => true,
+            'minLength'         => 1,
+            'maxLength'         => 1000,
+            'sanitize_callback' => 'sanitize_textarea_field',
+        ),
+    );
+}
+
+public function get_public_item_schema(): array {
+    return array(
+        '$schema'    => 'http://json-schema.org/draft-04/schema#',
+        'title'      => 'notice',
+        'type'       => 'object',
+        'properties' => array(
+            'id'      => array( 'type' => 'integer', 'readonly' => true ),
+            'title'   => array( 'type' => 'string' ),
+            'message' => array( 'type' => 'string' ),
+        ),
+    );
+}
+```
+
+{!# guide-step: responses | Return data through REST response objects #!}
+Callbacks return data; they do not `echo`, call `die`, or use `wp_send_json()`. Use `WP_Error` for actionable errors and `WP_REST_Response` when status or headers matter.
+
+```php
+<?php
+public function index( \WP_REST_Request $request ): \WP_REST_Response {
+    $posts = get_posts(
+        array(
+            'post_type'      => 'cn_notice',
+            'post_status'    => 'publish',
+            'posts_per_page' => (int) $request['per_page'],
+            'no_found_rows'  => true,
+        )
+    );
+
+    $items = array_map(
+        static fn ( \WP_Post $post ): array => array(
+            'id'      => $post->ID,
+            'title'   => get_the_title( $post ),
+            'message' => wp_strip_all_tags( $post->post_content ),
+        ),
+        $posts
+    );
+
+    return new \WP_REST_Response( $items, 200 );
+}
+
+public function store( \WP_REST_Request $request ): \WP_REST_Response|\WP_Error {
+    $post_id = wp_insert_post(
+        array(
+            'post_type'    => 'cn_notice',
+            'post_status'  => 'publish',
+            'post_title'   => (string) $request['title'],
+            'post_content' => (string) $request['message'],
+        ),
+        true
+    );
+
+    if ( is_wp_error( $post_id ) ) {
+        return new \WP_Error(
+            'cn_notice_not_created',
+            __( 'The notice could not be created.', 'cn-notices' ),
+            array( 'status' => 500 )
+        );
+    }
+
+    return new \WP_REST_Response( array( 'id' => $post_id ), 201 );
+}
+```
+
+{!# guide-step: wordpress-client | Read the endpoint inside WordPress #!}
+Use `@wordpress/api-fetch` for an admin or editor screen. Its nonce middleware works with the REST nonce supplied by WordPress. Present loading and failure states in text and use a polite live region for asynchronous status.
+
+```js
+import apiFetch from '@wordpress/api-fetch';
+
+export async function loadNotices(signal) {
+    return apiFetch({
+        path: '/cn/v1/notices?per_page=10&_fields=id,title,message',
+        signal,
+    });
+}
+
+export async function createNotice(title, message) {
+    return apiFetch({
+        path: '/cn/v1/notices',
+        method: 'POST',
+        data: { title, message },
+    });
+}
+```
+
+```jsx
+<p role="status" aria-live="polite">
+    {isLoading ? 'Loading notices…' : statusMessage}
+</p>
+```
+
+{!# guide-step: external-client | Read public data with browser JavaScript #!}
+External public consumers can use `fetch` without credentials. Set a timeout, check the status before parsing, encode query parameters through `URL`, and avoid exposing Application Passwords in browser code.
+
+```js
+export async function fetchNotices(origin) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    const url = new URL('/wp-json/cn/v1/notices', origin);
+    url.searchParams.set('per_page', '10');
+    url.searchParams.set('_fields', 'id,title,message');
+
+    try {
+        const response = await fetch(url, {
+            headers: { Accept: 'application/json' },
+            signal: controller.signal,
+        });
+
+        if (!response.ok) {
+            throw new Error(`Notices request failed with ${response.status}`);
+        }
+
+        return await response.json();
+    } finally {
+        window.clearTimeout(timeout);
+    }
+}
+```
+
+{!# guide-step: verify | Test success, denial, invalid input, and scale #!}
+Exercise the endpoint as anonymous, subscriber, editor and administrator. Check the schema, maximum page size, absent records, malformed values, authentication and caching. REST nonces prevent CSRF; the capability callback performs authorization.
+
+```bash
+wp rest route list | grep '/cn/v1/notices'
+curl --fail 'https://example.com/wp-json/cn/v1/notices?per_page=2&_fields=id,title'
+curl --request POST 'https://example.com/wp-json/cn/v1/notices' \
+  --header 'Content-Type: application/json' \
+  --data '{"title":"Denied","message":"Anonymous writes must fail."}'
+```
+
+```text
+- anonymous GET succeeds only with deliberately public fields
+- anonymous and underprivileged POST return 401/403
+- missing, oversized, and wrong-type arguments return useful 400 errors
+- callbacks never print or terminate the request directly
+- queries are bounded and indexed for their real access pattern
+- loading, empty, error, and success states are perceivable without colour alone
+```
+GUIDE,
+        ];
+    }
+
+    /** @return array{filename: string, title: string, description: string, tags: list<string>, content: string} */
+    private function customTableGuide(): array
+    {
+        return [
+            'filename' => '07-custom-field-database-table.guide.md',
+            'title' => 'Create a custom field and database table',
+            'description' => 'Create a versioned custom table, repository, protected REST API, accessible admin field UI, and dynamic front-end table.',
+            'tags' => ['custom-fields', 'database', 'rest-api', 'blocks', 'plugin-development', 'security', 'wordpress-vip'],
+            'content' => <<<'GUIDE'
+{!# guide-step: justify | Prove that a custom table is warranted #!}
+Target WordPress 7.0.2 stable and test the WordPress 7.1 compatibility lane. Ordinary fields attached to a post should normally use registered post meta. Choose a custom table only when independent row lifecycle, relationship volume, retention rules, or indexed query patterns make meta impractical.
+
+Document the decision before writing schema. This example stores multiple structured service records per post and needs ordered, indexed queries. It uses the modern REST API rather than legacy `admin-ajax.php` for the editor UI.
+
+```text
+Table: {$wpdb->prefix}cn_service_records
+Relationship: many records belong to one post
+Primary read: published records by post_id, ordered by sort_order then id
+Write permission: current_user_can('edit_post', $post_id)
+Retention: retained on deactivation; explicit opt-in cleanup on uninstall
+Personal data: none permitted in label or value fields
+```
+
+{!# guide-step: structure | Separate schema, storage, API, UI, and rendering #!}
+A small separation keeps database access reviewable and makes migrations testable. Prefix WordPress-global identifiers and namespace PHP classes.
+
+```text
+cn-service-records/
+├── cn-service-records.php
+├── includes/
+│   ├── class-schema.php
+│   ├── class-records-repository.php
+│   └── class-rest-controller.php
+├── src/
+│   └── admin.js
+├── build/
+│   └── admin.js
+└── blocks/
+    └── records-table/
+        ├── block.json
+        └── render.php
+```
+
+```php
+<?php
+/**
+ * Plugin Name: CN Service Records
+ * Version: 1.0.0
+ * Requires at least: 7.0
+ * Requires PHP: 8.1
+ * Text Domain: cn-service-records
+ */
+
+namespace CN\ServiceRecords;
+
+defined( 'ABSPATH' ) || exit;
+define( 'CN_SERVICE_RECORDS_FILE', __FILE__ );
+
+require_once __DIR__ . '/includes/class-schema.php';
+require_once __DIR__ . '/includes/class-records-repository.php';
+require_once __DIR__ . '/includes/class-rest-controller.php';
+```
+
+{!# guide-step: schema | Create a prefixed, versioned table with dbDelta #!}
+Use `$wpdb->prefix`, the site's charset/collation, and indexes matching the documented queries. `dbDelta()` is particular about SQL layout, including the two spaces after `PRIMARY KEY`. Store a schema version so upgrades do not rely on activation hooks, which are not run when a plugin updates.
+
+```php
+<?php
+namespace CN\ServiceRecords;
+
+final class Schema {
+    private const VERSION = '1.0.0';
+    private const OPTION  = 'cn_service_records_schema_version';
+
+    public static function table_name(): string {
+        global $wpdb;
+
+        return $wpdb->prefix . 'cn_service_records';
+    }
+
+    public static function maybe_upgrade(): void {
+        if ( self::VERSION === get_option( self::OPTION ) ) {
+            return;
+        }
+
+        self::install();
+    }
+
+    public static function install(): void {
+        global $wpdb;
+
+        $table             = self::table_name();
+        $charset_collate   = $wpdb->get_charset_collate();
+        $create_table_sql  = "CREATE TABLE {$table} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            post_id bigint(20) unsigned NOT NULL,
+            label varchar(190) NOT NULL,
+            value text NOT NULL,
+            sort_order int(10) unsigned NOT NULL DEFAULT 0,
+            created_at datetime NOT NULL,
+            updated_at datetime NOT NULL,
+            PRIMARY KEY  (id),
+            KEY post_order (post_id, sort_order, id)
+        ) {$charset_collate};";
+
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+        dbDelta( $create_table_sql );
+
+        update_option( self::OPTION, self::VERSION, false );
+    }
+}
+```
+
+```php
+<?php
+register_activation_hook( __FILE__, array( \CN\ServiceRecords\Schema::class, 'install' ) );
+add_action( 'plugins_loaded', array( \CN\ServiceRecords\Schema::class, 'maybe_upgrade' ) );
+```
+
+For multisite network activation, iterate existing sites in bounded batches and switch blog context before installation; also hook new-site creation. Never assume a literal `wp_` prefix.
+
+{!# guide-step: repository | Encapsulate prepared reads and formatted writes #!}
+Keep SQL in a repository, use explicit formats, and prepare dynamic values. Cache repeat reads and invalidate the one affected post after a successful write. Do not cache permission decisions.
+
+```php
+<?php
+namespace CN\ServiceRecords;
+
+final class Records_Repository {
+    /** @return list<array{id: int, label: string, value: string, sort_order: int}> */
+    public function for_post( int $post_id ): array {
+        global $wpdb;
+
+        $cache_key = 'post_' . $post_id;
+        $cached    = wp_cache_get( $cache_key, 'cn_service_records' );
+
+        if ( is_array( $cached ) ) {
+            return $cached;
+        }
+
+        $table = Schema::table_name();
+        $sql   = $wpdb->prepare(
+            "SELECT id, label, value, sort_order FROM {$table} WHERE post_id = %d ORDER BY sort_order ASC, id ASC LIMIT 100",
+            $post_id
+        );
+        $rows  = $wpdb->get_results( $sql, ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared immediately above.
+        $rows  = is_array( $rows ) ? $rows : array();
+
+        wp_cache_set( $cache_key, $rows, 'cn_service_records', HOUR_IN_SECONDS );
+
+        return $rows;
+    }
+
+    public function create( int $post_id, string $label, string $value, int $sort_order ): int|\WP_Error {
+        global $wpdb;
+
+        $inserted = $wpdb->insert(
+            Schema::table_name(),
+            array(
+                'post_id'    => $post_id,
+                'label'      => $label,
+                'value'      => $value,
+                'sort_order' => $sort_order,
+                'created_at' => current_time( 'mysql', true ),
+                'updated_at' => current_time( 'mysql', true ),
+            ),
+            array( '%d', '%s', '%s', '%d', '%s', '%s' )
+        );
+
+        if ( false === $inserted ) {
+            return new \WP_Error( 'cn_record_not_saved', __( 'The record could not be saved.', 'cn-service-records' ) );
+        }
+
+        wp_cache_delete( 'post_' . $post_id, 'cn_service_records' );
+
+        return (int) $wpdb->insert_id;
+    }
+}
+```
+
+{!# guide-step: api | Add protected read and write REST routes #!}
+Expose only the fields the UI needs. Authorize against the related post object, not a role name or login check. Argument schemas validate and sanitize before the callback. REST cookie authentication verifies its nonce before this capability callback runs.
+
+```php
+<?php
+namespace CN\ServiceRecords;
+
+final class REST_Controller extends \WP_REST_Controller {
+    public function __construct( private readonly Records_Repository $repository ) {}
+
+    public function register_routes(): void {
+        register_rest_route(
+            'cn/v1',
+            '/posts/(?P<post_id>\d+)/service-records',
+            array(
+                array(
+                    'methods'             => \WP_REST_Server::READABLE,
+                    'callback'            => array( $this, 'index' ),
+                    'permission_callback' => static fn ( \WP_REST_Request $request ): bool => current_user_can( 'edit_post', (int) $request['post_id'] ),
+                    'args'                => array(
+                        'post_id' => array( 'type' => 'integer', 'minimum' => 1, 'sanitize_callback' => 'absint' ),
+                    ),
+                ),
+                array(
+                    'methods'             => \WP_REST_Server::CREATABLE,
+                    'callback'            => array( $this, 'store' ),
+                    'permission_callback' => static fn ( \WP_REST_Request $request ): bool => current_user_can( 'edit_post', (int) $request['post_id'] ),
+                    'args'                => array(
+                        'post_id'    => array( 'type' => 'integer', 'minimum' => 1, 'sanitize_callback' => 'absint' ),
+                        'label'      => array( 'type' => 'string', 'required' => true, 'maxLength' => 190, 'sanitize_callback' => 'sanitize_text_field' ),
+                        'value'      => array( 'type' => 'string', 'required' => true, 'maxLength' => 2000, 'sanitize_callback' => 'sanitize_textarea_field' ),
+                        'sort_order' => array( 'type' => 'integer', 'default' => 0, 'minimum' => 0, 'sanitize_callback' => 'absint' ),
+                    ),
+                ),
+            )
+        );
+    }
+
+    public function index( \WP_REST_Request $request ): \WP_REST_Response|\WP_Error {
+        $post_id = (int) $request['post_id'];
+
+        if ( ! get_post( $post_id ) ) {
+            return new \WP_Error( 'cn_post_not_found', __( 'The post does not exist.', 'cn-service-records' ), array( 'status' => 404 ) );
+        }
+
+        return new \WP_REST_Response( $this->repository->for_post( $post_id ), 200 );
+    }
+
+    public function store( \WP_REST_Request $request ): \WP_REST_Response|\WP_Error {
+        $record_id = $this->repository->create(
+            (int) $request['post_id'],
+            (string) $request['label'],
+            (string) $request['value'],
+            (int) $request['sort_order']
+        );
+
+        if ( is_wp_error( $record_id ) ) {
+            $record_id->add_data( array( 'status' => 500 ) );
+
+            return $record_id;
+        }
+
+        return new \WP_REST_Response( array( 'id' => $record_id ), 201 );
+    }
+}
+
+add_action( 'rest_api_init', static function (): void {
+    ( new REST_Controller( new Records_Repository() ) )->register_routes();
+} );
+```
+
+{!# guide-step: admin-assets | Load the field UI only in the block editor #!}
+Enqueue the compiled UI only for supported post-editor screens. Asset metadata generated by `@wordpress/scripts` supplies dependencies and a cache-safe version.
+
+```php
+<?php
+add_action( 'enqueue_block_editor_assets', static function (): void {
+    $screen = get_current_screen();
+
+    if ( ! $screen || 'post' !== $screen->base || ! in_array( $screen->post_type, array( 'post', 'page' ), true ) ) {
+        return;
+    }
+
+    $asset = require plugin_dir_path( CN_SERVICE_RECORDS_FILE ) . 'build/admin.asset.php';
+
+    wp_enqueue_script(
+        'cn-service-records-editor',
+        plugins_url( 'build/admin.js', CN_SERVICE_RECORDS_FILE ),
+        $asset['dependencies'],
+        $asset['version'],
+        true
+    );
+} );
+```
+
+{!# guide-step: field-ui | Build an accessible editor field panel #!}
+Use WordPress components so labels, descriptions, focus, disabled state, and error notices follow editor conventions. `apiFetch` handles the same-origin REST nonce. Keep status text in a polite live region and move focus to invalid input only when it helps the user recover.
+
+```jsx
+import apiFetch from '@wordpress/api-fetch';
+import { Button, Notice, PanelBody, TextControl, TextareaControl } from '@wordpress/components';
+import { PluginDocumentSettingPanel } from '@wordpress/editor';
+import { registerPlugin } from '@wordpress/plugins';
+import { useSelect } from '@wordpress/data';
+import { useState } from '@wordpress/element';
+
+function ServiceRecordPanel() {
+    const postId = useSelect((select) => select('core/editor').getCurrentPostId(), []);
+    const [label, setLabel] = useState('');
+    const [value, setValue] = useState('');
+    const [status, setStatus] = useState('');
+    const [error, setError] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
+
+    async function saveRecord() {
+        setError('');
+
+        if (!label.trim() || !value.trim()) {
+            setError('Enter both a label and a value.');
+            return;
+        }
+
+        setIsSaving(true);
+        setStatus('Saving service record…');
+
+        try {
+            await apiFetch({
+                path: `/cn/v1/posts/${postId}/service-records`,
+                method: 'POST',
+                data: { label, value, sort_order: 0 },
+            });
+            setLabel('');
+            setValue('');
+            setStatus('Service record saved.');
+        } catch (requestError) {
+            setError(requestError?.message || 'The service record could not be saved.');
+            setStatus('');
+        } finally {
+            setIsSaving(false);
+        }
+    }
+
+    return (
+        <PluginDocumentSettingPanel name="cn-service-record" title="Service record">
+            {error && <Notice status="error" isDismissible={false}>{error}</Notice>}
+            <TextControl label="Label" help="A short public heading." value={label} onChange={setLabel} />
+            <TextareaControl label="Value" help="Plain-text information shown below the label." value={value} onChange={setValue} />
+            <Button variant="primary" disabled={isSaving} isBusy={isSaving} onClick={saveRecord}>
+                Save record
+            </Button>
+            <p role="status" aria-live="polite">{status}</p>
+        </PluginDocumentSettingPanel>
+    );
+}
+
+registerPlugin('cn-service-records', { render: ServiceRecordPanel });
+```
+
+{!# guide-step: frontend | Render the records through a dynamic block #!}
+Register a dynamic `cn/service-records-table` block with `apiVersion: 3` and a `postId` attribute. The render callback reads through the repository and escapes at the final HTML context. Use a list for label/value pairs unless real column relationships make a table the clearest structure.
+
+```php
+<?php
+$post_id = isset( $attributes['postId'] ) ? absint( $attributes['postId'] ) : get_the_ID();
+$repository = new \CN\ServiceRecords\Records_Repository();
+$records = $repository->for_post( $post_id );
+
+if ( array() === $records ) {
+    return;
+}
+?>
+<section <?php echo get_block_wrapper_attributes(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Core returns escaped attributes. ?>>
+    <h2><?php echo esc_html__( 'Service information', 'cn-service-records' ); ?></h2>
+    <dl class="cn-service-records">
+        <?php foreach ( $records as $record ) : ?>
+            <div class="cn-service-records__item">
+                <dt><?php echo esc_html( $record['label'] ); ?></dt>
+                <dd><?php echo esc_html( $record['value'] ); ?></dd>
+            </div>
+        <?php endforeach; ?>
+    </dl>
+</section>
+```
+
+If the product genuinely needs a comparison table, add a visible `<caption>`, use `<th scope="col">` and `<th scope="row">`, and keep cells associated at narrow zoom widths rather than replacing table semantics with anonymous divs.
+
+{!# guide-step: operations | Plan upgrades, privacy, multisite, and removal #!}
+Keep data on deactivation so a temporary plugin disable does not destroy it. If uninstall cleanup is offered, make it an explicit setting and document that deletion cannot be undone. Register privacy exporter/eraser callbacks if the schema later contains personal data.
+
+On WordPress VIP, review custom-table creation before deployment, ensure `$wpdb->prefix` is used, validate indexes against real queries, and cache repeat reads. Avoid schema changes during high-traffic web requests; deploy controlled migrations and make them backward-compatible.
+
+```text
+Operational checklist
+- schema version can migrate forward from every supported release
+- migration can safely run twice
+- table name follows the active site prefix
+- indexes match EXPLAIN for actual reads
+- deletes define what happens to rows when a post is deleted
+- cache keys are invalidated after insert/update/delete
+- privacy/export/erasure ownership is documented
+- uninstall behaviour is explicit and tested
+```
+
+{!# guide-step: verify | Test storage, permissions, migration, and UI access #!}
+Automate happy paths and failures: empty values, oversized values, duplicate submits, missing posts, insufficient capability, database failure, absent rows, cache invalidation, an older schema version, and multisite prefixes. Test keyboard, zoom, error announcements and visible labels in the editor iframe.
+
+```bash
+wp db query 'SHOW CREATE TABLE '"$(wp db prefix)"'cn_service_records'
+wp rest route list | grep '/cn/v1/posts'
+wp cache flush
+```
+
+```text
+- subscriber cannot read or write editor-only values
+- editor can save only against posts they may edit
+- database writes use explicit formats and reads are prepared/bounded
+- failed writes return useful REST errors without leaking SQL details
+- dynamic output is escaped and contains valid semantic structure
+- UI works with keyboard only, 200% zoom, and screen-reader announcements
+- WordPress 7.0.2 and the latest 7.1 compatibility lane both pass
+```
+GUIDE,
+        ];
+    }
+}

@@ -4,22 +4,38 @@ import {
     ChevronDown,
     ChevronRight,
     CornerDownRight,
+    FilePenLine,
     FilePlus2,
     Folder,
     FolderOpen,
     FolderPlus,
     GripVertical,
     Inbox,
+    LayoutGrid,
     MoreHorizontal,
     Package,
     Pencil,
     Pin,
     Plus,
+    RotateCcw,
     Star,
     Trash2,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
-import type { DragEvent as ReactDragEvent } from 'react';
+import {
+    createContext,
+    useContext,
+    useEffect,
+    useId,
+    useMemo,
+    useRef,
+    useState,
+} from 'react';
+import type {
+    DragEvent as ReactDragEvent,
+    KeyboardEvent as ReactKeyboardEvent,
+    MouseEvent as ReactMouseEvent,
+} from 'react';
+import { createPortal } from 'react-dom';
 import { SnippetFileIcon } from '@/components/snippets/snippet-file-icon';
 import { SnippetUsageIndicator } from '@/components/snippets/snippet-usage-indicator';
 import {
@@ -29,10 +45,25 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+    groupProjectsByLibraryCategory,
+    mergeLibraryCategoryProjectOrder,
+} from '@/lib/snippets/library-category-groups';
+import type { LibraryCategoryProjectGroup } from '@/lib/snippets/library-category-groups';
+import { sortPinnedFirst } from '@/lib/snippets/pinned-order';
+import type {
+    SnippetCodeExcerpt,
+    SnippetExcerptMode,
+} from '@/lib/snippets/search-query';
+import { reorderWorkspaceIds } from '@/lib/snippets/workspace-order';
+import type { WorkspaceDropPlacement } from '@/lib/snippets/workspace-order';
 import { cn } from '@/lib/utils';
 import type {
     Framework,
     LanguageOption,
+    LibraryCategory,
+    LibraryTrash,
+    LibraryTrashItem,
     Snippet,
     SnippetFolder,
     SnippetProject,
@@ -40,6 +71,7 @@ import type {
 } from '@/types';
 
 const explorerDragMime = 'application/x-codepilot-library-item';
+const workspaceReorderMime = 'application/x-codepilot-workspace-order';
 
 export type LibraryBrowseMode =
     | 'projects'
@@ -49,7 +81,8 @@ export type LibraryBrowseMode =
     | 'language'
     | 'tag'
     | 'framework'
-    | 'pinned';
+    | 'pinned'
+    | 'trash';
 
 export type ExplorerEntity =
     | { type: 'project'; project: SnippetProject }
@@ -87,6 +120,7 @@ export type ExplorerDropTarget =
     | { type: 'folder'; projectId: number; folderId: number };
 
 export type ProjectExplorerProps = {
+    libraryCategories?: LibraryCategory[];
     projects: SnippetProject[];
     standaloneSnippets?: Snippet[];
     visibleSnippets?: Snippet[];
@@ -97,17 +131,28 @@ export type ProjectExplorerProps = {
     tags?: Tag[];
     browseMode?: LibraryBrowseMode;
     filtering?: boolean;
+    includeMatchedProjectContents?: boolean;
+    searchCodeMatches?: ReadonlyMap<number, SnippetCodeExcerpt>;
+    searchExcerptMode?: SnippetExcerptMode;
     activeSnippetId: number | null;
     dirtySnippetIds: Set<number>;
     revealedProjectId: number | null;
     revealedFolderId: number | null;
     expandedProjectIds?: ReadonlySet<number>;
     expandedFolderIds?: ReadonlySet<number>;
+    collapsedLibraryCategoryKeys?: ReadonlySet<string>;
     pinnedKeys?: ReadonlySet<string>;
+    trash?: LibraryTrash;
     onProjectExpandedChange?: (projectId: number, expanded: boolean) => void;
     onFolderExpandedChange?: (folderId: number, expanded: boolean) => void;
+    onLibraryCategoryExpandedChange?: (
+        categoryKey: string,
+        expanded: boolean,
+    ) => void;
     onOpen: (snippet: Snippet) => void;
-    onNewProject: () => void;
+    onNewProject: (category?: LibraryCategory | null) => void;
+    onRenameLibraryCategory?: (category: LibraryCategory) => void;
+    onDeleteLibraryCategory?: (category: LibraryCategory) => void;
     onNewStandaloneSnippet?: () => void;
     onNewFolder: (
         project: SnippetProject,
@@ -118,10 +163,65 @@ export type ProjectExplorerProps = {
         folder: SnippetFolder | null,
     ) => void;
     onRename: (entity: ExplorerEntity) => void;
+    onInlineRename: (
+        entity: ExplorerEntity,
+        name: string,
+        callbacks: InlineRenameCallbacks,
+    ) => void;
     onDelete: (entity: ExplorerEntity) => void;
+    onRestore: (item: LibraryTrashItem) => void;
+    onPermanentlyDelete: (item: LibraryTrashItem) => void;
     onToggleFavourite?: (snippet: Snippet) => void;
     onTogglePin?: (target: LibraryPinTarget) => void;
     onMove?: (item: ExplorerDragItem, target: ExplorerDropTarget) => void;
+    onReorderProjects?: (projectIds: number[]) => void;
+};
+
+export type InlineRenameCallbacks = {
+    onSuccess: () => void;
+    onError: (message: string) => void;
+    onFinish: () => void;
+};
+
+type InlineRenameState = {
+    entity: ExplorerEntity;
+    value: string;
+    processing: boolean;
+    error: string | null;
+};
+
+type ExplorerContextMenuState = {
+    entity: ExplorerEntity;
+    x: number;
+    y: number;
+};
+
+type WorkspaceReorderDrop = {
+    projectId: number;
+    placement: WorkspaceDropPlacement;
+};
+
+type ExplorerInteractionContextValue = {
+    renameState: InlineRenameState | null;
+    beginRename: (entity: ExplorerEntity) => void;
+    updateRename: (value: string) => void;
+    commitRename: () => void;
+    cancelRename: () => void;
+    openContextMenu: (
+        event: ReactMouseEvent<HTMLElement>,
+        entity: ExplorerEntity,
+    ) => void;
+    searchCodeMatches: ReadonlyMap<number, SnippetCodeExcerpt>;
+    searchExcerptMode: SnippetExcerptMode;
+};
+
+const ExplorerInteractionContext =
+    createContext<ExplorerInteractionContextValue | null>(null);
+
+const emptyTrash: LibraryTrash = {
+    projects: [],
+    folders: [],
+    snippets: [],
 };
 
 type BrowseGroup = {
@@ -139,6 +239,7 @@ type FrameworkProjectGroup = {
 };
 
 export function ProjectExplorer({
+    libraryCategories = [],
     projects,
     standaloneSnippets = [],
     visibleSnippets,
@@ -149,25 +250,37 @@ export function ProjectExplorer({
     tags = [],
     browseMode = 'projects',
     filtering = false,
+    includeMatchedProjectContents = true,
+    searchCodeMatches = new Map<number, SnippetCodeExcerpt>(),
+    searchExcerptMode = 'off',
     activeSnippetId,
     dirtySnippetIds,
     revealedProjectId,
     revealedFolderId,
     expandedProjectIds,
     expandedFolderIds,
+    collapsedLibraryCategoryKeys = new Set<string>(),
     pinnedKeys = new Set<string>(),
+    trash = emptyTrash,
     onProjectExpandedChange,
     onFolderExpandedChange,
+    onLibraryCategoryExpandedChange,
     onOpen,
     onNewProject,
+    onRenameLibraryCategory,
+    onDeleteLibraryCategory,
     onNewStandaloneSnippet,
     onNewFolder,
     onNewSnippet,
     onRename,
+    onInlineRename,
     onDelete,
+    onRestore,
+    onPermanentlyDelete,
     onToggleFavourite,
     onTogglePin,
     onMove,
+    onReorderProjects,
 }: ProjectExplorerProps) {
     const [localExpandedProjectIds, setLocalExpandedProjectIds] = useState<
         Set<number>
@@ -177,6 +290,119 @@ export function ProjectExplorer({
     >(() => new Set());
     const [dragItem, setDragItem] = useState<ExplorerDragItem | null>(null);
     const [activeDropKey, setActiveDropKey] = useState<string | null>(null);
+    const [renameState, setRenameState] = useState<InlineRenameState | null>(
+        null,
+    );
+    const [contextMenu, setContextMenu] =
+        useState<ExplorerContextMenuState | null>(null);
+    const contextMenuRef = useRef<HTMLDivElement>(null);
+    const beginRename = (entity: ExplorerEntity) => {
+        setContextMenu(null);
+        setRenameState({
+            entity,
+            value: explorerEntityName(entity),
+            processing: false,
+            error: null,
+        });
+    };
+    const cancelRename = () => setRenameState(null);
+    const updateRename = (value: string) =>
+        setRenameState((current) =>
+            current ? { ...current, value, error: null } : current,
+        );
+    const commitRename = () => {
+        if (!renameState || renameState.processing) {
+            return;
+        }
+
+        const name = renameState.value.trim();
+
+        if (name === explorerEntityName(renameState.entity)) {
+            cancelRename();
+
+            return;
+        }
+
+        if (name === '') {
+            setRenameState((current) =>
+                current ? { ...current, error: 'A name is required.' } : null,
+            );
+
+            return;
+        }
+
+        const entityKey = explorerEntityKey(renameState.entity);
+        setRenameState((current) =>
+            current ? { ...current, processing: true, error: null } : null,
+        );
+        onInlineRename(renameState.entity, name, {
+            onSuccess: cancelRename,
+            onError: (message) =>
+                setRenameState((current) =>
+                    current && explorerEntityKey(current.entity) === entityKey
+                        ? { ...current, processing: false, error: message }
+                        : current,
+                ),
+            onFinish: () =>
+                setRenameState((current) =>
+                    current && explorerEntityKey(current.entity) === entityKey
+                        ? { ...current, processing: false }
+                        : current,
+                ),
+        });
+    };
+    const openContextMenu = (
+        event: ReactMouseEvent<HTMLElement>,
+        entity: ExplorerEntity,
+    ) => {
+        event.preventDefault();
+        setContextMenu({ entity, x: event.clientX, y: event.clientY });
+    };
+
+    useEffect(() => {
+        if (!contextMenu) {
+            return;
+        }
+
+        const focusFrame = window.requestAnimationFrame(() => {
+            contextMenuRef.current
+                ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
+                ?.focus();
+        });
+        const closeOnPointerDown = (event: PointerEvent) => {
+            if (
+                event.target instanceof Node &&
+                !contextMenuRef.current?.contains(event.target)
+            ) {
+                setContextMenu(null);
+            }
+        };
+        const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                setContextMenu(null);
+            }
+        };
+
+        window.addEventListener('pointerdown', closeOnPointerDown);
+        window.addEventListener('keydown', closeOnEscape);
+
+        return () => {
+            window.cancelAnimationFrame(focusFrame);
+            window.removeEventListener('pointerdown', closeOnPointerDown);
+            window.removeEventListener('keydown', closeOnEscape);
+        };
+    }, [contextMenu]);
+
+    const interactionContext: ExplorerInteractionContextValue = {
+        renameState,
+        beginRename,
+        updateRename,
+        commitRename,
+        cancelRename,
+        openContextMenu,
+        searchCodeMatches,
+        searchExcerptMode,
+    };
     const expandedProjects = expandedProjectIds ?? localExpandedProjectIds;
     const expandedFolders = expandedFolderIds ?? localExpandedFolderIds;
     const allSnippets = useMemo(
@@ -232,6 +458,15 @@ export function ProjectExplorer({
             projects,
             visibleSnippetIds,
         ],
+    );
+    const libraryCategoryGroups = useMemo(
+        () =>
+            groupProjectsByLibraryCategory(
+                libraryCategories,
+                browserProjects,
+                !filtering,
+            ),
+        [browserProjects, filtering, libraryCategories],
     );
     const snippetProjects = useMemo(() => {
         const entries = new Map<number, SnippetProject>();
@@ -416,6 +651,7 @@ export function ProjectExplorer({
         matchedProjectIds,
         matchedFolderIds,
         filtering,
+        includeMatchedProjectContents,
         activeSnippetId,
         dirtySnippetIds,
         revealedProjectId,
@@ -435,6 +671,10 @@ export function ProjectExplorer({
         onDelete,
         onToggleFavourite,
         onTogglePin,
+        onReorderProjects:
+            browseMode === 'projects' && !filtering
+                ? onReorderProjects
+                : undefined,
         onDragStart: startDragging,
         onDragEnd: finishDragging,
         onDragOverTarget: dragOverTarget,
@@ -443,8 +683,45 @@ export function ProjectExplorer({
 
     let content: React.ReactNode;
 
-    if (browseMode === 'projects') {
-        content = <ProjectTreeContent {...treeProps} />;
+    if (browseMode === 'trash') {
+        content = (
+            <TrashPanel
+                trash={trash}
+                onRestore={onRestore}
+                onPermanentlyDelete={onPermanentlyDelete}
+            />
+        );
+    } else if (browseMode === 'projects') {
+        content = (
+            <>
+                <ProjectTreeContent
+                    key={filtering ? 'filtered-standalone' : 'all-standalone'}
+                    {...treeProps}
+                    projects={[]}
+                />
+                {libraryCategoryGroups.map((group) => (
+                    <LibraryCategoryProjectSection
+                        key={group.key}
+                        group={group}
+                        treeProps={treeProps}
+                        allProjectIds={projects.map((project) => project.id)}
+                        expanded={
+                            filtering ||
+                            !collapsedLibraryCategoryKeys.has(group.key)
+                        }
+                        onExpandedChange={(expanded) =>
+                            onLibraryCategoryExpandedChange?.(
+                                group.key,
+                                expanded,
+                            )
+                        }
+                        onNewProject={onNewProject}
+                        onRenameCategory={onRenameLibraryCategory}
+                        onDeleteCategory={onDeleteLibraryCategory}
+                    />
+                ))}
+            </>
+        );
     } else if (browseMode === 'flat') {
         content = (
             <BrowseGroupSection
@@ -669,61 +946,166 @@ export function ProjectExplorer({
     }
 
     const hasModeContent =
-        browseMode === 'projects'
-            ? filtering
-                ? browserSnippets.length > 0 ||
-                  matchedProjectIds.size > 0 ||
-                  matchedFolderIds.size > 0
-                : projects.length > 0 || standaloneSnippets.length > 0
-            : browseMode === 'framework'
-              ? browserProjects.length > 0 ||
-                (!filtering && frameworks.length > 0)
-            : browseMode === 'guides' ||
-              browseMode === 'pinned' ||
-                browseMode === 'favourites' ||
-                browserSnippets.length > 0 ||
-                (!filtering &&
-                    browseMode === 'language' &&
-                    languageOptions.length > 0) ||
-                (!filtering && browseMode === 'tag' && tags.length > 0);
+        browseMode === 'trash'
+            ? trash.projects.length +
+                  trash.folders.length +
+                  trash.snippets.length >
+              0
+            : browseMode === 'projects'
+              ? filtering
+                  ? browserSnippets.length > 0 ||
+                    matchedProjectIds.size > 0 ||
+                    matchedFolderIds.size > 0
+                  : projects.length > 0 ||
+                    standaloneSnippets.length > 0 ||
+                    libraryCategories.length > 0
+              : browseMode === 'framework'
+                ? browserProjects.length > 0 ||
+                  (!filtering && frameworks.length > 0)
+                : browseMode === 'guides' ||
+                  browseMode === 'pinned' ||
+                  browseMode === 'favourites' ||
+                  browserSnippets.length > 0 ||
+                  (!filtering &&
+                      browseMode === 'language' &&
+                      languageOptions.length > 0) ||
+                  (!filtering && browseMode === 'tag' && tags.length > 0);
 
     return (
-        <section
-            className="relative min-h-0 flex-1 overflow-y-auto pb-8"
-            onDragLeave={(event) => {
-                if (
-                    !event.currentTarget.contains(event.relatedTarget as Node)
-                ) {
-                    setActiveDropKey(null);
-                }
-            }}
-        >
-            {dragItem && dragItemLabel && (
-                <DragMoveStatus
-                    sourceLabel={dragItemLabel}
-                    targetLabel={activeDropLabel}
-                />
-            )}
-            {hasModeContent ? (
-                <div className="py-1 select-none">{content}</div>
-            ) : (
-                <EmptyBrowserMessage
-                    icon={filtering ? Inbox : Package}
-                    title={
-                        filtering ? 'No matching snippets' : 'No snippets yet'
+        <ExplorerInteractionContext.Provider value={interactionContext}>
+            <section
+                className="relative min-h-0 flex-1 overflow-y-auto pb-8"
+                onDragLeave={(event) => {
+                    if (
+                        !event.currentTarget.contains(
+                            event.relatedTarget as Node,
+                        )
+                    ) {
+                        setActiveDropKey(null);
                     }
-                    detail={
-                        filtering
-                            ? 'Try a broader query or another browse mode.'
-                            : 'Create a standalone snippet or a project to get started.'
-                    }
-                    actionLabel={
-                        !filtering ? 'Create your first project' : undefined
-                    }
-                    onAction={!filtering ? onNewProject : undefined}
-                />
-            )}
-        </section>
+                }}
+            >
+                {dragItem && dragItemLabel && (
+                    <DragMoveStatus
+                        sourceLabel={dragItemLabel}
+                        targetLabel={activeDropLabel}
+                    />
+                )}
+                {hasModeContent ? (
+                    <div className="py-1 select-none">{content}</div>
+                ) : (
+                    <EmptyBrowserMessage
+                        icon={
+                            browseMode === 'trash'
+                                ? Trash2
+                                : filtering
+                                  ? Inbox
+                                  : Package
+                        }
+                        title={
+                            browseMode === 'trash'
+                                ? 'Trash is empty'
+                                : filtering
+                                  ? 'No matching library items'
+                                  : 'No snippets yet'
+                        }
+                        detail={
+                            browseMode === 'trash'
+                                ? 'Deleted files, folders, and workspaces will appear here.'
+                                : filtering
+                                  ? 'Try a broader query or change the search filters.'
+                                  : 'Create a standalone snippet or a project to get started.'
+                        }
+                        actionLabel={
+                            !filtering && browseMode !== 'trash'
+                                ? 'Create your first project'
+                                : undefined
+                        }
+                        onAction={
+                            !filtering && browseMode !== 'trash'
+                                ? onNewProject
+                                : undefined
+                        }
+                    />
+                )}
+            </section>
+
+            {contextMenu
+                ? createPortal(
+                      <div
+                          ref={contextMenuRef}
+                          role="menu"
+                          aria-label={`${explorerEntityName(contextMenu.entity)} actions`}
+                          className="fixed z-100 min-w-44 rounded-md border border-code-border bg-code-raised p-1 text-[11px] text-code-text shadow-2xl"
+                          style={explorerContextMenuPosition(contextMenu)}
+                      >
+                          {contextMenu.entity.type !== 'snippet' ? (
+                              <>
+                                  <button
+                                      type="button"
+                                      role="menuitem"
+                                      onClick={() => {
+                                          const entity = contextMenu.entity;
+
+                                          if (entity.type === 'snippet') {
+                                              return;
+                                          }
+
+                                          onNewSnippet(
+                                              entity.project,
+                                              entity.type === 'folder'
+                                                  ? entity.folder
+                                                  : null,
+                                          );
+                                          setContextMenu(null);
+                                      }}
+                                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left outline-none hover:bg-code-hover focus:bg-code-hover"
+                                  >
+                                      <FilePlus2 className="size-3.5 text-code-muted" />
+                                      New file
+                                  </button>
+                                  <div className="my-1 h-px bg-code-border" />
+                              </>
+                          ) : null}
+                          <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => beginRename(contextMenu.entity)}
+                              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left outline-none hover:bg-code-hover focus:bg-code-hover"
+                          >
+                              <Pencil className="size-3.5 text-code-muted" />
+                              Rename
+                          </button>
+                          <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                  onRename(contextMenu.entity);
+                                  setContextMenu(null);
+                              }}
+                              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left outline-none hover:bg-code-hover focus:bg-code-hover"
+                          >
+                              <FilePenLine className="size-3.5 text-code-muted" />
+                              {explorerEntityEditLabel(contextMenu.entity)}
+                          </button>
+                          <div className="my-1 h-px bg-code-border" />
+                          <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                  onDelete(contextMenu.entity);
+                                  setContextMenu(null);
+                              }}
+                              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-red-300 outline-none hover:bg-red-500/10 focus:bg-red-500/10"
+                          >
+                              <Trash2 className="size-3.5" />
+                              Move to Trash
+                          </button>
+                      </div>,
+                      document.body,
+                  )
+                : null}
+        </ExplorerInteractionContext.Provider>
     );
 }
 
@@ -741,12 +1123,14 @@ type TreeContentProps = Pick<
     | 'onDelete'
     | 'onToggleFavourite'
     | 'onTogglePin'
+    | 'onReorderProjects'
 > & {
     standaloneSnippets: Snippet[];
     visibleSnippetIds: Set<number> | null;
     matchedProjectIds: ReadonlySet<number>;
     matchedFolderIds: ReadonlySet<number>;
     filtering: boolean;
+    includeMatchedProjectContents: boolean;
     showStandalone?: boolean;
     expandedProjects: ReadonlySet<number>;
     expandedFolders: ReadonlySet<number>;
@@ -771,6 +1155,143 @@ type TreeContentProps = Pick<
     ) => void;
 };
 
+function LibraryCategoryProjectSection({
+    group,
+    treeProps,
+    allProjectIds,
+    expanded,
+    onExpandedChange,
+    onNewProject,
+    onRenameCategory,
+    onDeleteCategory,
+}: {
+    group: LibraryCategoryProjectGroup;
+    treeProps: TreeContentProps;
+    allProjectIds: number[];
+    expanded: boolean;
+    onExpandedChange: (expanded: boolean) => void;
+    onNewProject: (category?: LibraryCategory | null) => void;
+    onRenameCategory?: (category: LibraryCategory) => void;
+    onDeleteCategory?: (category: LibraryCategory) => void;
+}) {
+    const projectIds = group.projects.map((project) => project.id);
+    const projectCountLabel = `${group.projects.length} ${group.projects.length === 1 ? 'workspace' : 'workspaces'}`;
+    const onReorderProjects = treeProps.onReorderProjects
+        ? (reorderedProjectIds: number[]) =>
+              treeProps.onReorderProjects?.(
+                  mergeLibraryCategoryProjectOrder(
+                      allProjectIds,
+                      projectIds,
+                      reorderedProjectIds,
+                  ),
+              )
+        : undefined;
+
+    return (
+        <section aria-label={`${group.label} category`}>
+            <div className="group/category flex h-8 items-center gap-1 bg-code-canvas/35 px-2">
+                <button
+                    type="button"
+                    aria-expanded={expanded}
+                    aria-label={`${expanded ? 'Collapse' : 'Expand'} ${group.label}`}
+                    onClick={() => onExpandedChange(!expanded)}
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                >
+                    {expanded ? (
+                        <ChevronDown className="size-3 shrink-0 text-code-faint" />
+                    ) : (
+                        <ChevronRight className="size-3 shrink-0 text-code-faint" />
+                    )}
+                    <LayoutGrid className="size-3.5 shrink-0 text-code-muted" />
+                    <span className="min-w-0 flex-1 truncate text-[10px] font-semibold tracking-[0.08em] text-code-muted uppercase">
+                        {group.label}
+                    </span>
+                    <span className="font-mono text-[8px] text-code-faint">
+                        {group.projects.length}
+                    </span>
+                </button>
+
+                <div className="flex items-center">
+                    <div className="pointer-events-none opacity-0 transition-opacity group-focus-within/category:pointer-events-auto group-focus-within/category:opacity-100 group-hover/category:pointer-events-auto group-hover/category:opacity-100">
+                        <IconButton
+                            label={`New workspace in ${group.label}`}
+                            onClick={() => onNewProject(group.category)}
+                        >
+                            <Plus className="size-3.5" />
+                        </IconButton>
+                    </div>
+                    {group.category && onRenameCategory && onDeleteCategory && (
+                        <LibraryCategoryMenu
+                            category={group.category}
+                            onRename={onRenameCategory}
+                            onDelete={onDeleteCategory}
+                        />
+                    )}
+                </div>
+            </div>
+
+            {expanded &&
+                (group.projects.length > 0 ? (
+                    <ProjectTreeContent
+                        {...treeProps}
+                        projects={group.projects}
+                        standaloneSnippets={[]}
+                        showStandalone={false}
+                        onReorderProjects={onReorderProjects}
+                    />
+                ) : (
+                    <button
+                        type="button"
+                        onClick={() => onNewProject(group.category)}
+                        className="flex h-8 w-full items-center gap-1.5 px-8 text-left text-[9px] text-code-faint transition hover:bg-code-hover hover:text-code-muted"
+                    >
+                        <Plus className="size-3" /> Add the first workspace
+                        <span className="sr-only"> to {group.label}</span>
+                    </button>
+                ))}
+
+            <span className="sr-only">{projectCountLabel}</span>
+        </section>
+    );
+}
+
+function LibraryCategoryMenu({
+    category,
+    onRename,
+    onDelete,
+}: {
+    category: LibraryCategory;
+    onRename: (category: LibraryCategory) => void;
+    onDelete: (category: LibraryCategory) => void;
+}) {
+    return (
+        <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+                <button
+                    type="button"
+                    aria-label={`${category.name} category actions`}
+                    title={`Manage ${category.name} category`}
+                    className="rounded bg-code-raised/60 p-1 text-code-muted transition hover:bg-code-hover hover:text-code-text"
+                >
+                    <MoreHorizontal className="size-3" />
+                </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="right" align="start" className="w-40">
+                <DropdownMenuItem onSelect={() => onRename(category)}>
+                    <Pencil /> Rename category
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                    variant="destructive"
+                    onSelect={() => onDelete(category)}
+                >
+                    <Trash2 /> Delete category
+                </DropdownMenuItem>
+            </DropdownMenuContent>
+        </DropdownMenu>
+    );
+}
+
 function ProjectTreeContent({
     projects,
     standaloneSnippets,
@@ -778,6 +1299,7 @@ function ProjectTreeContent({
     matchedProjectIds,
     matchedFolderIds,
     filtering,
+    includeMatchedProjectContents,
     showStandalone = true,
     activeSnippetId,
     dirtySnippetIds,
@@ -798,23 +1320,222 @@ function ProjectTreeContent({
     onDelete,
     onToggleFavourite,
     onTogglePin,
+    onReorderProjects,
     onDragStart,
     onDragEnd,
     onDragOverTarget,
     onDropTarget,
 }: TreeContentProps) {
-    const visibleProjects = projects.filter(
-        (project) =>
-            !filtering ||
-            matchedProjectIds.has(project.id) ||
-            project.folders.some((folder) => matchedFolderIds.has(folder.id)) ||
-            project.snippets.some((snippet) =>
-                visibleSnippetIds?.has(snippet.id),
-            ),
+    const interactions = useExplorerInteractions();
+    const reorderStatusId = useId();
+    const [workspaceDragId, setWorkspaceDragId] = useState<number | null>(null);
+    const [workspaceDrop, setWorkspaceDrop] =
+        useState<WorkspaceReorderDrop | null>(null);
+    const [reorderStatus, setReorderStatus] = useState('');
+    const workspaceDropCommittedRef = useRef(false);
+    const visibleProjects = sortPinnedProjects(
+        projects.filter(
+            (project) =>
+                !filtering ||
+                matchedProjectIds.has(project.id) ||
+                project.folders.some((folder) =>
+                    matchedFolderIds.has(folder.id),
+                ) ||
+                project.snippets.some((snippet) =>
+                    visibleSnippetIds?.has(snippet.id),
+                ),
+        ),
+        pinnedKeys,
     );
+    const workspaceIds = visibleProjects.map((project) => project.id);
+    const projectChildDepth = onReorderProjects ? 2 : 0;
+    const isPinnedWorkspace = (projectId: number) =>
+        pinnedKeys.has(libraryPinKey({ type: 'project', id: projectId }));
+    const resolveWorkspaceDragId = (event: ReactDragEvent<HTMLElement>) => {
+        if (workspaceDragId !== null) {
+            return workspaceDragId;
+        }
+
+        const transferredId = Number(
+            event.dataTransfer.getData(workspaceReorderMime),
+        );
+
+        return Number.isInteger(transferredId) && transferredId > 0
+            ? transferredId
+            : null;
+    };
+    const startWorkspaceReorder = (
+        event: ReactDragEvent<HTMLElement>,
+        project: SnippetProject,
+    ) => {
+        event.stopPropagation();
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData(workspaceReorderMime, String(project.id));
+        event.dataTransfer.setData('text/plain', project.name);
+        workspaceDropCommittedRef.current = false;
+        setWorkspaceDragId(project.id);
+        setWorkspaceDrop(null);
+        setReorderStatus(
+            `Moving ${project.name}. Choose a ${isPinnedWorkspace(project.id) ? 'pinned' : 'unpinned'} workspace and place it before or after.`,
+        );
+    };
+    const finishWorkspaceReorder = (project: SnippetProject) => {
+        if (!workspaceDropCommittedRef.current) {
+            setReorderStatus(`Stopped moving ${project.name}.`);
+        }
+
+        workspaceDropCommittedRef.current = false;
+        setWorkspaceDragId(null);
+        setWorkspaceDrop(null);
+    };
+    const dragOverWorkspace = (
+        event: ReactDragEvent<HTMLElement>,
+        targetProject: SnippetProject,
+    ) => {
+        const sourceId = resolveWorkspaceDragId(event);
+        const sourceProject = visibleProjects.find(
+            (project) => project.id === sourceId,
+        );
+
+        if (
+            sourceId === null ||
+            sourceId === targetProject.id ||
+            !sourceProject ||
+            isPinnedWorkspace(sourceId) !== isPinnedWorkspace(targetProject.id)
+        ) {
+            event.dataTransfer.dropEffect = 'none';
+            setWorkspaceDrop(null);
+
+            if (
+                sourceProject &&
+                isPinnedWorkspace(sourceProject.id) !==
+                    isPinnedWorkspace(targetProject.id)
+            ) {
+                setReorderStatus(
+                    `${sourceProject.name} can only move within the same pinned group.`,
+                );
+            }
+
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        event.dataTransfer.dropEffect = 'move';
+
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const placement: WorkspaceDropPlacement =
+            event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after';
+
+        setWorkspaceDrop((current) =>
+            current?.projectId === targetProject.id &&
+            current.placement === placement
+                ? current
+                : { projectId: targetProject.id, placement },
+        );
+        setReorderStatus(
+            `Move ${sourceProject.name} ${placement} ${targetProject.name}.`,
+        );
+    };
+    const dropWorkspace = (
+        event: ReactDragEvent<HTMLElement>,
+        targetProject: SnippetProject,
+    ) => {
+        const sourceId = resolveWorkspaceDragId(event);
+        const sourceProject = visibleProjects.find(
+            (project) => project.id === sourceId,
+        );
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const pointerPlacement: WorkspaceDropPlacement =
+            event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after';
+        const placement =
+            workspaceDrop?.projectId === targetProject.id
+                ? workspaceDrop.placement
+                : pointerPlacement;
+
+        if (
+            !onReorderProjects ||
+            sourceId === null ||
+            sourceId === targetProject.id ||
+            !sourceProject ||
+            isPinnedWorkspace(sourceId) !== isPinnedWorkspace(targetProject.id)
+        ) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        onReorderProjects(
+            reorderWorkspaceIds(
+                workspaceIds,
+                sourceId,
+                targetProject.id,
+                placement,
+            ),
+        );
+        workspaceDropCommittedRef.current = true;
+        setWorkspaceDragId(null);
+        setWorkspaceDrop(null);
+        setReorderStatus(
+            `Moved ${sourceProject.name} ${placement} ${targetProject.name}.`,
+        );
+    };
+    const reorderWorkspaceWithKeyboard = (
+        event: ReactKeyboardEvent<HTMLButtonElement>,
+        project: SnippetProject,
+    ) => {
+        if (
+            !onReorderProjects ||
+            (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')
+        ) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const pinned = isPinnedWorkspace(project.id);
+        const group = visibleProjects.filter(
+            (candidate) => isPinnedWorkspace(candidate.id) === pinned,
+        );
+        const currentIndex = group.findIndex(
+            (candidate) => candidate.id === project.id,
+        );
+        const targetIndex =
+            event.key === 'ArrowUp' ? currentIndex - 1 : currentIndex + 1;
+        const target = group[targetIndex];
+
+        if (!target) {
+            setReorderStatus(
+                `${project.name} is already ${event.key === 'ArrowUp' ? 'first' : 'last'} in the ${pinned ? 'pinned' : 'unpinned'} workspace group.`,
+            );
+
+            return;
+        }
+
+        const placement: WorkspaceDropPlacement =
+            event.key === 'ArrowUp' ? 'before' : 'after';
+        onReorderProjects(
+            reorderWorkspaceIds(workspaceIds, project.id, target.id, placement),
+        );
+        setReorderStatus(
+            `Moved ${project.name} ${placement} ${target.name}. Position ${targetIndex + 1} of ${group.length} in the ${pinned ? 'pinned' : 'unpinned'} workspace group.`,
+        );
+    };
 
     return (
         <>
+            {onReorderProjects && (
+                <p
+                    id={reorderStatusId}
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                    className="sr-only"
+                >
+                    {reorderStatus}
+                </p>
+            )}
             {showStandalone && (
                 <StandaloneSection
                     snippets={standaloneSnippets}
@@ -841,7 +1562,6 @@ function ProjectTreeContent({
             {visibleProjects.map((project) => {
                 const projectMatches = matchedProjectIds.has(project.id);
                 const isPersistedExpanded = expandedProjects.has(project.id);
-                const isExpanded = filtering || isPersistedExpanded;
                 const target: ExplorerDropTarget = {
                     type: 'project',
                     projectId: project.id,
@@ -852,6 +1572,7 @@ function ProjectTreeContent({
                     filtering,
                     projectMatches,
                     matchedFolderIds,
+                    includeMatchedProjectContents,
                 );
                 const visibleFolderIds = collectVisibleFolderIds(
                     project,
@@ -859,21 +1580,35 @@ function ProjectTreeContent({
                     filtering,
                     projectMatches,
                     matchedFolderIds,
+                    includeMatchedProjectContents,
                 );
+                const hasFilteredChildren =
+                    (treeVisibleSnippetIds?.size ?? 0) > 0 ||
+                    visibleFolderIds.size > 0;
+                const isExpanded = filtering
+                    ? hasFilteredChildren
+                    : isPersistedExpanded;
                 const rootFolders = project.folders.filter(
                     (folder) =>
                         folder.parent_id === null &&
                         (!filtering || visibleFolderIds.has(folder.id)),
                 );
-                const rootSnippets = project.snippets.filter(
-                    (snippet) =>
-                        snippet.folder_id === null &&
-                        (!treeVisibleSnippetIds ||
-                            treeVisibleSnippetIds.has(snippet.id)),
+                const rootSnippets = sortPinnedSnippets(
+                    project.snippets.filter(
+                        (snippet) =>
+                            snippet.folder_id === null &&
+                            (!treeVisibleSnippetIds ||
+                                treeVisibleSnippetIds.has(snippet.id)),
+                    ),
+                    pinnedKeys,
                 );
                 const projectPinTarget: LibraryPinTarget = {
                     type: 'project',
                     id: project.id,
+                };
+                const projectEntity: ExplorerEntity = {
+                    type: 'project',
+                    project,
                 };
                 const projectDropState = resolveDropVisualState(
                     dragItem,
@@ -881,6 +1616,20 @@ function ProjectTreeContent({
                     eligibleDropKeys,
                     activeDropKey,
                 );
+                const isWorkspaceDragOrigin = workspaceDragId === project.id;
+                const workspaceDropPlacement =
+                    workspaceDrop?.projectId === project.id
+                        ? workspaceDrop.placement
+                        : null;
+                const projectIsPinned = isPinnedWorkspace(project.id);
+                const pinnedGroup = visibleProjects.filter(
+                    (candidate) =>
+                        isPinnedWorkspace(candidate.id) === projectIsPinned,
+                );
+                const groupPosition =
+                    pinnedGroup.findIndex(
+                        (candidate) => candidate.id === project.id,
+                    ) + 1;
 
                 return (
                     <div key={project.id}>
@@ -888,43 +1637,132 @@ function ProjectTreeContent({
                             data-project-id={project.id}
                             data-drop-target="project"
                             data-drop-state={projectDropState}
-                            onDragOver={(event) =>
-                                onDragOverTarget(event, target)
+                            data-workspace-drag-origin={
+                                isWorkspaceDragOrigin || undefined
                             }
-                            onDrop={(event) => onDropTarget(event, target)}
+                            data-workspace-drop-placement={
+                                workspaceDropPlacement ?? undefined
+                            }
+                            onDragOver={(event) => {
+                                if (
+                                    workspaceDragId !== null ||
+                                    Array.from(
+                                        event.dataTransfer.types,
+                                    ).includes(workspaceReorderMime)
+                                ) {
+                                    dragOverWorkspace(event, project);
+
+                                    return;
+                                }
+
+                                onDragOverTarget(event, target);
+                            }}
+                            onDragLeave={(event) => {
+                                if (
+                                    workspaceDrop?.projectId === project.id &&
+                                    !(
+                                        event.relatedTarget instanceof Node &&
+                                        event.currentTarget.contains(
+                                            event.relatedTarget,
+                                        )
+                                    )
+                                ) {
+                                    setWorkspaceDrop(null);
+                                }
+                            }}
+                            onDrop={(event) => {
+                                if (
+                                    workspaceDragId !== null ||
+                                    Array.from(
+                                        event.dataTransfer.types,
+                                    ).includes(workspaceReorderMime)
+                                ) {
+                                    dropWorkspace(event, project);
+
+                                    return;
+                                }
+
+                                onDropTarget(event, target);
+                            }}
+                            onContextMenu={(event) =>
+                                interactions.openContextMenu(
+                                    event,
+                                    projectEntity,
+                                )
+                            }
                             className={cn(
-                                'group flex h-8 items-center gap-1 border-l-2 px-1.5 transition-[background-color,border-color,box-shadow,opacity] hover:bg-code-hover',
+                                'group group/workspace relative flex h-8 items-center gap-1 border-l-2 px-1.5 transition-[background-color,border-color,box-shadow,opacity] hover:bg-code-hover',
                                 revealedProjectId === project.id
                                     ? 'border-code-accent bg-code-hover/70'
                                     : 'border-transparent',
+                                isWorkspaceDragOrigin &&
+                                    'border-sky-300/70 bg-sky-400/10 opacity-65 ring-1 ring-sky-300/30 ring-inset',
+                                workspaceDropPlacement && 'bg-sky-400/8',
                                 dropTargetClasses(projectDropState),
                             )}
                         >
-                            <button
-                                type="button"
-                                aria-expanded={isExpanded}
-                                onClick={() =>
-                                    onProjectExpandedChange(
-                                        project.id,
-                                        !isPersistedExpanded,
-                                    )
-                                }
-                                className="flex min-w-0 flex-1 items-center gap-1 text-left"
-                            >
-                                {isExpanded ? (
-                                    <ChevronDown className="size-3 shrink-0 text-code-faint" />
-                                ) : (
-                                    <ChevronRight className="size-3 shrink-0 text-code-faint" />
-                                )}
-                                <ProjectIcon kind={project.kind} />
-                                <span className="truncate text-[11px] font-semibold tracking-[0.02em] text-code-text uppercase">
-                                    {project.name}
-                                </span>
+                            {workspaceDropPlacement && (
+                                <WorkspaceInsertionIndicator
+                                    placement={workspaceDropPlacement}
+                                />
+                            )}
+                            {onReorderProjects && !dragItem && (
+                                <WorkspaceReorderHandle
+                                    project={project}
+                                    pinned={projectIsPinned}
+                                    position={groupPosition}
+                                    total={pinnedGroup.length}
+                                    isDragging={isWorkspaceDragOrigin}
+                                    statusId={reorderStatusId}
+                                    onDragStart={startWorkspaceReorder}
+                                    onDragEnd={finishWorkspaceReorder}
+                                    onKeyDown={reorderWorkspaceWithKeyboard}
+                                />
+                            )}
+                            <div className="flex min-w-0 flex-1 items-center gap-1">
+                                <button
+                                    type="button"
+                                    aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${project.name}`}
+                                    aria-expanded={isExpanded}
+                                    onClick={() =>
+                                        onProjectExpandedChange(
+                                            project.id,
+                                            !isPersistedExpanded,
+                                        )
+                                    }
+                                    className="flex shrink-0 items-center gap-1"
+                                >
+                                    {isExpanded ? (
+                                        <ChevronDown className="size-3 shrink-0 text-code-faint" />
+                                    ) : (
+                                        <ChevronRight className="size-3 shrink-0 text-code-faint" />
+                                    )}
+                                    <ProjectIcon kind={project.kind} />
+                                </button>
+                                <InlineEntityName
+                                    entity={projectEntity}
+                                    name={project.name}
+                                    onActivate={() =>
+                                        onProjectExpandedChange(
+                                            project.id,
+                                            !isPersistedExpanded,
+                                        )
+                                    }
+                                    className="min-w-0 flex-1 truncate text-[11px] font-semibold tracking-[0.02em] text-code-text uppercase"
+                                />
                                 <ProjectFrameworkTags
                                     frameworks={project.frameworks}
                                 />
-                            </button>
-                            {dragItem ? (
+                            </div>
+                            {workspaceDragId !== null ? (
+                                isWorkspaceDragOrigin ? (
+                                    <DragOriginHint />
+                                ) : workspaceDropPlacement ? (
+                                    <WorkspaceDropHint
+                                        placement={workspaceDropPlacement}
+                                    />
+                                ) : null
+                            ) : dragItem ? (
                                 <DropTargetHint state={projectDropState} />
                             ) : (
                                 <>
@@ -956,19 +1794,14 @@ function ProjectTreeContent({
                                             <FolderPlus className="size-3.5" />
                                         </IconButton>
                                         <EntityMenu
+                                            entity={projectEntity}
                                             label={`${project.name} actions`}
                                             editLabel="Edit workspace"
-                                            onRename={() =>
-                                                onRename({
-                                                    type: 'project',
-                                                    project,
-                                                })
+                                            onEdit={() =>
+                                                onRename(projectEntity)
                                             }
                                             onDelete={() =>
-                                                onDelete({
-                                                    type: 'project',
-                                                    project,
-                                                })
+                                                onDelete(projectEntity)
                                             }
                                         />
                                     </div>
@@ -983,7 +1816,7 @@ function ProjectTreeContent({
                                         key={folder.id}
                                         project={project}
                                         folder={folder}
-                                        depth={0}
+                                        depth={projectChildDepth}
                                         filtering={filtering}
                                         visibleSnippetIds={
                                             treeVisibleSnippetIds
@@ -1015,7 +1848,7 @@ function ProjectTreeContent({
                                         key={snippet.id}
                                         snippet={snippet}
                                         project={project}
-                                        depth={0}
+                                        depth={projectChildDepth}
                                         isActive={
                                             activeSnippetId === snippet.id
                                         }
@@ -1112,15 +1945,24 @@ function FolderNode({
     onDragOverTarget,
     onDropTarget,
 }: FolderNodeProps) {
+    const interactions = useExplorerInteractions();
+    const folderEntity: ExplorerEntity = {
+        type: 'folder',
+        project,
+        folder,
+    };
     const childFolders = project.folders.filter(
         (candidate) =>
             candidate.parent_id === folder.id &&
             (!filtering || visibleFolderIds.has(candidate.id)),
     );
-    const snippets = project.snippets.filter(
-        (snippet) =>
-            snippet.folder_id === folder.id &&
-            (!visibleSnippetIds || visibleSnippetIds.has(snippet.id)),
+    const snippets = sortPinnedSnippets(
+        project.snippets.filter(
+            (snippet) =>
+                snippet.folder_id === folder.id &&
+                (!visibleSnippetIds || visibleSnippetIds.has(snippet.id)),
+        ),
+        pinnedKeys,
     );
     const isPersistedExpanded = expandedFolders.has(folder.id);
     const isExpanded = filtering || isPersistedExpanded;
@@ -1152,6 +1994,9 @@ function FolderNode({
                 data-drop-state={dropState}
                 onDragOver={(event) => onDragOverTarget(event, target)}
                 onDrop={(event) => onDropTarget(event, target)}
+                onContextMenu={(event) =>
+                    interactions.openContextMenu(event, folderEntity)
+                }
                 className={cn(
                     'group flex h-7 items-center gap-1 border-l-2 border-transparent pr-1.5 transition-[background-color,border-color,box-shadow,opacity] hover:bg-code-hover',
                     dropTargetClasses(dropState),
@@ -1169,9 +2014,10 @@ function FolderNode({
                 />
                 <button
                     type="button"
+                    aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${folder.name}`}
                     aria-expanded={isExpanded}
                     onClick={() => onToggle(folder.id, !isPersistedExpanded)}
-                    className="flex min-w-0 flex-1 items-center gap-1 text-left"
+                    className="flex shrink-0 items-center gap-1"
                 >
                     {isExpanded ? (
                         <ChevronDown className="size-3 shrink-0 text-code-faint" />
@@ -1183,10 +2029,13 @@ function FolderNode({
                     ) : (
                         <Folder className="size-3.5 shrink-0 text-code-faint" />
                     )}
-                    <span className="truncate text-[11px] text-code-muted">
-                        {folder.name}
-                    </span>
                 </button>
+                <InlineEntityName
+                    entity={folderEntity}
+                    name={folder.name}
+                    onActivate={() => onToggle(folder.id, !isPersistedExpanded)}
+                    className="min-w-0 flex-1 truncate text-[11px] text-code-muted"
+                />
                 {dragItem ? (
                     isDragOrigin ? (
                         <DragOriginHint />
@@ -1208,13 +2057,11 @@ function FolderNode({
                             <FolderPlus className="size-3" />
                         </IconButton>
                         <EntityMenu
+                            entity={folderEntity}
                             label={`${folder.name} actions`}
-                            onRename={() =>
-                                onRename({ type: 'folder', project, folder })
-                            }
-                            onDelete={() =>
-                                onDelete({ type: 'folder', project, folder })
-                            }
+                            editLabel="Edit folder"
+                            onEdit={() => onRename(folderEntity)}
+                            onDelete={() => onDelete(folderEntity)}
                         />
                     </div>
                 )}
@@ -1390,7 +2237,7 @@ function StandaloneSection({
             </div>
             {isExpanded && (
                 <div>
-                    {snippets.map((snippet) => (
+                    {sortPinnedSnippets(snippets, pinnedKeys).map((snippet) => (
                         <SnippetRow
                             key={snippet.id}
                             snippet={snippet}
@@ -1456,6 +2303,12 @@ function SnippetRow({
     onDragStart,
     onDragEnd,
 }: SnippetRowProps) {
+    const interactions = useExplorerInteractions();
+    const snippetEntity: ExplorerEntity = {
+        type: 'snippet',
+        project,
+        snippet,
+    };
     const pinTarget: LibraryPinTarget = { type: 'snippet', id: snippet.id };
     const rowDragItem: ExplorerDragItem = {
         type: 'snippet',
@@ -1464,13 +2317,18 @@ function SnippetRow({
         folderId: snippet.folder_id,
     };
     const isDragOrigin = isSameDragItem(activeDragItem, rowDragItem);
+    const searchCodeMatch = interactions.searchCodeMatches.get(snippet.id);
 
     return (
         <div
             data-snippet-id={snippet.id}
             data-drag-origin={isDragOrigin || undefined}
+            onContextMenu={(event) =>
+                interactions.openContextMenu(event, snippetEntity)
+            }
+            onClick={() => onOpen(snippet)}
             className={cn(
-                'group flex h-7 items-center border-l-2 border-transparent pr-1.5 transition-[background-color,border-color,box-shadow,opacity]',
+                'group min-h-7 cursor-pointer border-l-2 border-transparent transition-[background-color,border-color,box-shadow,opacity]',
                 isActive
                     ? 'bg-code-raised text-code-text'
                     : 'text-code-muted hover:bg-code-hover',
@@ -1480,61 +2338,111 @@ function SnippetRow({
             )}
             style={{ paddingLeft: `${depth * 12 + 11}px` }}
         >
-            <DragHandle
-                label={`Move ${snippet.filename}`}
-                item={rowDragItem}
-                isDragging={isDragOrigin}
-                onDragStart={onDragStart}
-                onDragEnd={onDragEnd}
-            />
-            <button
-                type="button"
-                onClick={() => onOpen(snippet)}
-                className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-            >
+            <div className="flex h-7 min-w-0 items-center pr-1.5">
+                <DragHandle
+                    label={`Move ${snippet.filename}`}
+                    item={rowDragItem}
+                    isDragging={isDragOrigin}
+                    onDragStart={onDragStart}
+                    onDragEnd={onDragEnd}
+                />
                 <SnippetFileIcon
                     language={snippet.language}
                     contentType={snippet.content_type}
-                    className="shrink-0"
+                    className="mr-1.5 shrink-0"
                 />
-                <span className="truncate text-[11px]">{snippet.filename}</span>
+                <InlineEntityName
+                    entity={snippetEntity}
+                    name={snippet.filename}
+                    onActivate={() => onOpen(snippet)}
+                    className="min-w-0 flex-1 truncate text-[11px]"
+                />
                 {isDirty && (
                     <span
                         aria-label="Unsaved changes"
                         className="size-1.5 shrink-0 rounded-full bg-[#d5a85e]"
                     />
                 )}
-            </button>
-            {!activeDragItem && (
-                <>
-                    <FavouriteButton
-                        snippet={snippet}
-                        onToggle={onToggleFavourite}
-                    />
-                    <SnippetUsageIndicator
-                        usage={snippet.usage}
-                        className="mr-0.5"
-                    />
-                    <div className="pointer-events-none flex items-center opacity-0 transition-opacity group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
-                        <PinButton
-                            label={`Pin ${snippet.filename}`}
-                            target={pinTarget}
-                            pinnedKeys={pinnedKeys}
-                            onToggle={onTogglePin}
+                {!activeDragItem && (
+                    <>
+                        <FavouriteButton
+                            snippet={snippet}
+                            onToggle={onToggleFavourite}
                         />
-                        <EntityMenu
-                            label={`${snippet.filename} actions`}
-                            onRename={() =>
-                                onRename({ type: 'snippet', project, snippet })
-                            }
-                            onDelete={() =>
-                                onDelete({ type: 'snippet', project, snippet })
-                            }
+                        <SnippetUsageIndicator
+                            usage={snippet.usage}
+                            className="mr-0.5"
                         />
-                    </div>
-                </>
+                        <div className="pointer-events-none flex items-center opacity-0 transition-opacity group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+                            <PinButton
+                                label={`Pin ${snippet.filename}`}
+                                target={pinTarget}
+                                pinnedKeys={pinnedKeys}
+                                onToggle={onTogglePin}
+                            />
+                            <EntityMenu
+                                entity={snippetEntity}
+                                label={`${snippet.filename} actions`}
+                                editLabel="Edit details"
+                                onEdit={() => onRename(snippetEntity)}
+                                onDelete={() => onDelete(snippetEntity)}
+                            />
+                        </div>
+                    </>
+                )}
+                {isDragOrigin && <DragOriginHint />}
+            </div>
+            {searchCodeMatch && interactions.searchExcerptMode !== 'off' && (
+                <SearchCodePreview
+                    excerpt={searchCodeMatch}
+                    mode={interactions.searchExcerptMode}
+                />
             )}
-            {isDragOrigin && <DragOriginHint />}
+        </div>
+    );
+}
+
+function SearchCodePreview({
+    excerpt,
+    mode,
+}: {
+    excerpt: SnippetCodeExcerpt;
+    mode: Exclude<SnippetExcerptMode, 'off'>;
+}) {
+    const matchStart = Math.max(
+        0,
+        Math.min(excerpt.matchStart, excerpt.text.length),
+    );
+    const matchEnd = Math.max(
+        matchStart,
+        Math.min(excerpt.matchEnd, excerpt.text.length),
+    );
+    const lineLabel =
+        excerpt.lineStart === excerpt.lineEnd
+            ? `L${excerpt.lineStart}`
+            : `L${excerpt.lineStart}–${excerpt.lineEnd}`;
+
+    return (
+        <div
+            aria-label={`Code match in ${excerpt.variationName}, ${lineLabel}`}
+            className={cn(
+                'min-w-0 pr-2 pb-2 pl-6',
+                mode === 'hover' &&
+                    'hidden group-focus-within:block group-hover:block [@media(hover:none)]:block',
+            )}
+        >
+            <div className="mb-0.5 flex items-center gap-1.5 font-mono text-[8px] text-code-faint">
+                <span>{lineLabel}</span>
+                <span aria-hidden="true">·</span>
+                <span className="truncate">{excerpt.variationName}</span>
+            </div>
+            <code className="block max-h-12 overflow-hidden text-[9px] leading-4 break-all whitespace-pre-wrap text-code-muted">
+                {excerpt.text.slice(0, matchStart)}
+                <mark className="rounded-sm bg-code-accent/20 text-code-text">
+                    {excerpt.text.slice(matchStart, matchEnd)}
+                </mark>
+                {excerpt.text.slice(matchEnd)}
+            </code>
         </div>
     );
 }
@@ -1605,7 +2513,7 @@ function BrowseGroupSection({
                 )}
             </div>
             {isExpanded &&
-                snippets.map((snippet) => (
+                sortPinnedSnippets(snippets, pinnedKeys).map((snippet) => (
                     <SnippetRow
                         key={`${label}-${snippet.id}`}
                         snippet={snippet}
@@ -1754,6 +2662,39 @@ function DropTargetHint({ state }: { state: DropVisualState }) {
     );
 }
 
+function WorkspaceInsertionIndicator({
+    placement,
+}: {
+    placement: WorkspaceDropPlacement;
+}) {
+    return (
+        <span
+            aria-hidden="true"
+            className={cn(
+                'pointer-events-none absolute right-1 left-1 z-20 h-0.5 rounded-full bg-sky-300 shadow-[0_0_10px_rgba(125,211,252,0.85)]',
+                placement === 'before' ? '-top-px' : '-bottom-px',
+            )}
+        >
+            <span className="absolute top-1/2 -left-0.5 size-1.5 -translate-y-1/2 rounded-full bg-sky-200" />
+        </span>
+    );
+}
+
+function WorkspaceDropHint({
+    placement,
+}: {
+    placement: WorkspaceDropPlacement;
+}) {
+    return (
+        <span
+            aria-hidden="true"
+            className="shrink-0 rounded-sm border border-sky-300/50 bg-sky-300/10 px-1.5 py-0.5 font-mono text-[8px] font-semibold tracking-[0.06em] text-sky-100 uppercase"
+        >
+            Insert {placement}
+        </span>
+    );
+}
+
 function DragOriginHint() {
     return (
         <span
@@ -1762,6 +2703,59 @@ function DragOriginHint() {
         >
             Origin
         </span>
+    );
+}
+
+function WorkspaceReorderHandle({
+    project,
+    pinned,
+    position,
+    total,
+    isDragging,
+    statusId,
+    onDragStart,
+    onDragEnd,
+    onKeyDown,
+}: {
+    project: SnippetProject;
+    pinned: boolean;
+    position: number;
+    total: number;
+    isDragging: boolean;
+    statusId: string;
+    onDragStart: (
+        event: ReactDragEvent<HTMLElement>,
+        project: SnippetProject,
+    ) => void;
+    onDragEnd: (project: SnippetProject) => void;
+    onKeyDown: (
+        event: ReactKeyboardEvent<HTMLButtonElement>,
+        project: SnippetProject,
+    ) => void;
+}) {
+    const groupLabel = pinned ? 'pinned' : 'unpinned';
+    const label = `Reorder ${project.name}. Position ${position} of ${total} in the ${groupLabel} workspace group. Use Arrow Up or Arrow Down.`;
+
+    return (
+        <button
+            type="button"
+            draggable
+            aria-label={label}
+            aria-describedby={statusId}
+            aria-keyshortcuts="ArrowUp ArrowDown"
+            title={label}
+            onClick={(event) => event.stopPropagation()}
+            onDragStart={(event) => onDragStart(event, project)}
+            onDragEnd={() => onDragEnd(project)}
+            onKeyDown={(event) => onKeyDown(event, project)}
+            className={cn(
+                'flex size-5 shrink-0 cursor-grab items-center justify-center rounded-sm text-code-faint opacity-0 transition group-focus-within/workspace:opacity-100 group-hover/workspace:opacity-100 hover:bg-code-raised hover:text-sky-300 focus:opacity-100 focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-sky-300/70 focus-visible:outline-none active:cursor-grabbing',
+                isDragging &&
+                    'bg-sky-400/10 text-sky-200 opacity-100 ring-1 ring-sky-300/50',
+            )}
+        >
+            <GripVertical className="size-3" />
+        </button>
     );
 }
 
@@ -1876,9 +2870,7 @@ function DragHandle({
 
 function ProjectIcon({ kind }: { kind: SnippetProject['kind'] }) {
     if (kind === 'guide') {
-        return (
-            <BookOpenText className="size-3.5 shrink-0 text-sky-300/80" />
-        );
+        return <BookOpenText className="size-3.5 shrink-0 text-sky-300/80" />;
     }
 
     return kind === 'bundle' ? (
@@ -1941,37 +2933,197 @@ function IconButton({
 }
 
 function EntityMenu({
+    entity,
     label,
-    editLabel = 'Rename',
-    onRename,
+    editLabel,
+    onEdit,
     onDelete,
 }: {
+    entity: ExplorerEntity;
     label: string;
-    editLabel?: string;
-    onRename: () => void;
+    editLabel: string;
+    onEdit: () => void;
     onDelete: () => void;
 }) {
+    const interactions = useExplorerInteractions();
+
     return (
         <DropdownMenu>
             <DropdownMenuTrigger asChild>
                 <button
                     type="button"
                     aria-label={label}
+                    onClick={(event) => event.stopPropagation()}
                     className="rounded p-1 text-code-faint transition hover:bg-code-hover hover:text-code-text"
                 >
                     <MoreHorizontal className="size-3" />
                 </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent side="right" align="start" className="w-36">
-                <DropdownMenuItem onSelect={onRename}>
-                    <Pencil /> {editLabel}
+                <DropdownMenuItem
+                    onSelect={() => interactions.beginRename(entity)}
+                >
+                    <Pencil /> Rename
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={onEdit}>
+                    <FilePenLine /> {editLabel}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem variant="destructive" onSelect={onDelete}>
-                    <Trash2 /> Delete
+                    <Trash2 /> Move to Trash
                 </DropdownMenuItem>
             </DropdownMenuContent>
         </DropdownMenu>
+    );
+}
+
+function InlineEntityName({
+    entity,
+    name,
+    className,
+    onActivate,
+}: {
+    entity: ExplorerEntity;
+    name: string;
+    className?: string;
+    onActivate: () => void;
+}) {
+    const interactions = useExplorerInteractions();
+    const inputRef = useRef<HTMLInputElement>(null);
+    const isRenaming =
+        interactions.renameState !== null &&
+        explorerEntityKey(interactions.renameState.entity) ===
+            explorerEntityKey(entity);
+
+    useEffect(() => {
+        if (isRenaming) {
+            inputRef.current?.focus();
+            inputRef.current?.select();
+        }
+    }, [isRenaming]);
+
+    if (isRenaming && interactions.renameState) {
+        return (
+            <input
+                ref={inputRef}
+                aria-label={`Rename ${name}`}
+                aria-invalid={Boolean(interactions.renameState.error)}
+                title={interactions.renameState.error ?? undefined}
+                value={interactions.renameState.value}
+                disabled={interactions.renameState.processing}
+                onClick={(event) => event.stopPropagation()}
+                onChange={(event) =>
+                    interactions.updateRename(event.target.value)
+                }
+                onBlur={interactions.commitRename}
+                onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
+                    if (event.key === 'Enter') {
+                        event.preventDefault();
+                        interactions.commitRename();
+                    } else if (event.key === 'Escape') {
+                        event.preventDefault();
+                        interactions.cancelRename();
+                    }
+                }}
+                className={cn(
+                    'h-5 min-w-0 flex-1 rounded bg-code-canvas px-1.5 text-[11px] text-code-text ring-1 ring-code-accent/70 outline-none disabled:opacity-60',
+                    interactions.renameState.error && 'ring-red-400/80',
+                )}
+            />
+        );
+    }
+
+    return (
+        <button
+            type="button"
+            title="Double-click to rename"
+            onClick={onActivate}
+            onDoubleClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                interactions.beginRename(entity);
+            }}
+            className={cn('text-left', className)}
+        >
+            {name}
+        </button>
+    );
+}
+
+function TrashPanel({
+    trash,
+    onRestore,
+    onPermanentlyDelete,
+}: {
+    trash: LibraryTrash;
+    onRestore: (item: LibraryTrashItem) => void;
+    onPermanentlyDelete: (item: LibraryTrashItem) => void;
+}) {
+    const groups = [
+        { label: 'Workspaces', items: trash.projects },
+        { label: 'Folders', items: trash.folders },
+        { label: 'Files', items: trash.snippets },
+    ];
+
+    return (
+        <div className="flex flex-col gap-2 px-2 py-1">
+            {groups.map((group) =>
+                group.items.length > 0 ? (
+                    <section key={group.label}>
+                        <div className="flex h-7 items-center px-1 text-[9px] font-semibold tracking-[0.12em] text-code-faint uppercase">
+                            {group.label}
+                            <span className="ml-auto font-mono">
+                                {group.items.length}
+                            </span>
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                            {group.items.map((item) => (
+                                <div
+                                    key={`${item.type}:${item.id}`}
+                                    className="group flex min-h-9 items-center gap-2 rounded px-2 py-1 hover:bg-code-hover"
+                                >
+                                    {item.type === 'project' ? (
+                                        <Package className="size-3.5 shrink-0 text-code-muted" />
+                                    ) : item.type === 'folder' ? (
+                                        <Folder className="size-3.5 shrink-0 text-code-muted" />
+                                    ) : (
+                                        <FilePenLine className="size-3.5 shrink-0 text-code-muted" />
+                                    )}
+                                    <span className="min-w-0 flex-1">
+                                        <span className="block truncate text-[11px] text-code-text">
+                                            {item.name}
+                                        </span>
+                                        <span className="block truncate text-[9px] text-code-faint">
+                                            {item.context}
+                                        </span>
+                                    </span>
+                                    <button
+                                        type="button"
+                                        aria-label={`Restore ${item.name}`}
+                                        title={`Restore ${item.name}`}
+                                        onClick={() => onRestore(item)}
+                                        className="flex size-6 shrink-0 items-center justify-center rounded text-code-faint transition hover:bg-code-raised hover:text-sky-200"
+                                    >
+                                        <RotateCcw className="size-3.5" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        aria-label={`Permanently delete ${item.name}`}
+                                        title={`Permanently delete ${item.name}`}
+                                        onClick={() =>
+                                            onPermanentlyDelete(item)
+                                        }
+                                        className="flex size-6 shrink-0 items-center justify-center rounded text-code-faint transition hover:bg-red-500/10 hover:text-red-300"
+                                    >
+                                        <Trash2 className="size-3.5" />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+                ) : null,
+            )}
+        </div>
     );
 }
 
@@ -2011,7 +3163,7 @@ function EmptyBrowserMessage({
 function buildBrowseGroups(
     mode: Exclude<
         LibraryBrowseMode,
-        'projects' | 'flat' | 'guides' | 'favourites' | 'pinned'
+        'projects' | 'flat' | 'guides' | 'favourites' | 'pinned' | 'trash'
     >,
     snippets: Snippet[],
     {
@@ -2271,6 +3423,24 @@ function sortBrowseGroups(
     });
 }
 
+function sortPinnedProjects(
+    projects: readonly SnippetProject[],
+    pinnedKeys: ReadonlySet<string>,
+): SnippetProject[] {
+    return sortPinnedFirst(projects, (project) =>
+        pinnedKeys.has(libraryPinKey({ type: 'project', id: project.id })),
+    );
+}
+
+function sortPinnedSnippets(
+    snippets: readonly Snippet[],
+    pinnedKeys: ReadonlySet<string>,
+): Snippet[] {
+    return sortPinnedFirst(snippets, (snippet) =>
+        pinnedKeys.has(libraryPinKey({ type: 'snippet', id: snippet.id })),
+    );
+}
+
 function addSnippetToGroup(
     groups: Map<string, BrowseGroup>,
     group: BrowseGroup,
@@ -2293,8 +3463,9 @@ function collectVisibleFolderIds(
     filtering: boolean,
     projectMatches: boolean,
     matchedFolderIds: ReadonlySet<number>,
+    includeMatchedProjectContents: boolean,
 ): Set<number> {
-    if (!filtering || projectMatches) {
+    if (!filtering || (projectMatches && includeMatchedProjectContents)) {
         return new Set(project.folders.map((folder) => folder.id));
     }
 
@@ -2334,6 +3505,7 @@ function collectTreeVisibleSnippetIds(
     filtering: boolean,
     projectMatches: boolean,
     matchedFolderIds: ReadonlySet<number>,
+    includeMatchedProjectContents: boolean,
 ): Set<number> | null {
     if (!filtering) {
         return visibleSnippetIds ? new Set(visibleSnippetIds) : null;
@@ -2341,7 +3513,7 @@ function collectTreeVisibleSnippetIds(
 
     const snippetIds = new Set(visibleSnippetIds ?? []);
 
-    if (projectMatches) {
+    if (projectMatches && includeMatchedProjectContents) {
         project.snippets.forEach((snippet) => snippetIds.add(snippet.id));
 
         return snippetIds;
@@ -2663,6 +3835,64 @@ export function libraryPinKey(target: LibraryPinTarget): string {
     }
 
     return `${target.type}:${target.id}`;
+}
+
+function useExplorerInteractions(): ExplorerInteractionContextValue {
+    const context = useContext(ExplorerInteractionContext);
+
+    if (!context) {
+        throw new Error(
+            'Explorer interactions must be used inside ProjectExplorer.',
+        );
+    }
+
+    return context;
+}
+
+function explorerEntityKey(entity: ExplorerEntity): string {
+    if (entity.type === 'project') {
+        return `project:${entity.project.id}`;
+    }
+
+    if (entity.type === 'folder') {
+        return `folder:${entity.folder.id}`;
+    }
+
+    return `snippet:${entity.snippet.id}`;
+}
+
+function explorerEntityName(entity: ExplorerEntity): string {
+    if (entity.type === 'project') {
+        return entity.project.name;
+    }
+
+    if (entity.type === 'folder') {
+        return entity.folder.name;
+    }
+
+    return entity.snippet.filename;
+}
+
+function explorerEntityEditLabel(entity: ExplorerEntity): string {
+    if (entity.type === 'project') {
+        return 'Edit workspace';
+    }
+
+    if (entity.type === 'folder') {
+        return 'Edit folder';
+    }
+
+    return 'Edit details';
+}
+
+function explorerContextMenuPosition({ x, y }: ExplorerContextMenuState): {
+    left: number;
+    top: number;
+} {
+    return {
+        left: Math.max(8, Math.min(x, window.innerWidth - 184)),
+        top: Math.max(8, Math.min(y, window.innerHeight - 152)),
+    };
 }
 
 function setSetValue<T>(

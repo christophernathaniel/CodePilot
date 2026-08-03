@@ -60,6 +60,6 @@ class ProjectPolicy
      */
     public function forceDelete(User $user, Project $project): bool
     {
-        return false;
+        return $project->user_id === $user->id;
     }
 }

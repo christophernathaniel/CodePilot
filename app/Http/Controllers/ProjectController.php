@@ -2,7 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Actions\Library\MoveItemToTrash;
+use App\Actions\Library\PermanentlyDeleteItem;
+use App\Actions\Library\RestoreItemFromTrash;
+use App\Actions\Snippets\ReorderProjects;
 use App\Actions\Snippets\SyncProjectFrameworks;
+use App\Http\Requests\Projects\ReorderProjectsRequest;
 use App\Http\Requests\Projects\StoreProjectRequest;
 use App\Http\Requests\Projects\UpdateProjectRequest;
 use App\Models\Project;
@@ -15,6 +20,26 @@ use Inertia\Inertia;
 
 class ProjectController extends Controller
 {
+    public function reorder(
+        ReorderProjectsRequest $request,
+        ReorderProjects $reorderProjects,
+    ): RedirectResponse {
+        /** @var User $user */
+        $user = $request->user();
+        $validated = $request->validated();
+        /** @var list<int|string> $validatedProjectIds */
+        $validatedProjectIds = $validated['project_ids'];
+        /** @var list<int> $projectIds */
+        $projectIds = array_map(
+            static fn (int|string $projectId): int => (int) $projectId,
+            $validatedProjectIds,
+        );
+
+        $reorderProjects->handle($user, $projectIds);
+
+        return back();
+    }
+
     public function store(
         StoreProjectRequest $request,
         SyncProjectFrameworks $syncProjectFrameworks,
@@ -63,14 +88,38 @@ class ProjectController extends Controller
         return back();
     }
 
-    public function destroy(Project $project): RedirectResponse
+    public function destroy(Project $project, MoveItemToTrash $moveItemToTrash): RedirectResponse
     {
         Gate::authorize('delete', $project);
 
-        $project->delete();
+        $moveItemToTrash->handle($project);
 
-        Inertia::flash('toast', ['type' => 'success', 'message' => __('Project deleted.')]);
+        Inertia::flash('toast', ['type' => 'success', 'message' => __('Project moved to Trash.')]);
 
         return to_route('dashboard');
+    }
+
+    public function restore(Project $project, RestoreItemFromTrash $restoreItemFromTrash): RedirectResponse
+    {
+        abort_unless($project->trashed(), 404);
+        Gate::authorize('restore', $project);
+
+        $restoreItemFromTrash->handle($project);
+
+        Inertia::flash('toast', ['type' => 'success', 'message' => __('Project restored.')]);
+
+        return back();
+    }
+
+    public function forceDestroy(Project $project, PermanentlyDeleteItem $permanentlyDeleteItem): RedirectResponse
+    {
+        abort_unless($project->trashed(), 404);
+        Gate::authorize('forceDelete', $project);
+
+        $permanentlyDeleteItem->handle($project);
+
+        Inertia::flash('toast', ['type' => 'success', 'message' => __('Project permanently deleted.')]);
+
+        return back();
     }
 }

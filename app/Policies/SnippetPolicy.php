@@ -60,7 +60,7 @@ class SnippetPolicy
      */
     public function forceDelete(User $user, Snippet $snippet): bool
     {
-        return false;
+        return $this->belongsToUser($snippet, $user);
     }
 
     private function belongsToUser(Snippet $snippet, User $user): bool

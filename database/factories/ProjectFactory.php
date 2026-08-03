@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\LibraryCategory;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
@@ -42,5 +43,10 @@ class ProjectFactory extends Factory
         return $this->state(fn (array $attributes) => [
             'kind' => Project::KIND_GUIDE,
         ]);
+    }
+
+    public function inLibraryCategory(LibraryCategory $libraryCategory): static
+    {
+        return $this->for($libraryCategory, 'libraryCategory');
     }
 }

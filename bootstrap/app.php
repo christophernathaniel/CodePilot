@@ -17,6 +17,13 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->encryptCookies(except: ['appearance', 'sidebar_state']);
 
+        $middleware->convertEmptyStringsToNull(except: [
+            fn (Request $request): bool => $request->is('clipboard-clips'),
+        ]);
+        $middleware->trimStrings(except: [
+            fn (Request $request): bool => $request->is('clipboard-clips'),
+        ]);
+
         $middleware->web(append: [
             HandleAppearance::class,
             HandleInertiaRequests::class,

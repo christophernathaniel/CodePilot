@@ -273,5 +273,10 @@ SHELL;
         ]);
 
         $this->call(SnippetExamplesSeeder::class);
+        $this->call(WordPressGutenbergGuidesSeeder::class);
+        $this->call(ClassesBundleSeeder::class);
+        $this->call(RequestsBundleSeeder::class);
+        $this->call(MySqlBundleSeeder::class);
+        $this->call(BooksCategorySeeder::class);
     }
 }

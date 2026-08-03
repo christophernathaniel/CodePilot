@@ -78,12 +78,17 @@ test('workspace is account scoped and serializes the complete project tree', fun
         );
 });
 
-test('workspace serializes distinct file favourites without leaking another account', function () {
+test('workspace serializes favourites and orders pins before unpinned peers without leaking another account', function () {
     $this->withoutVite();
 
     $user = User::factory()->create();
     $project = Project::factory()->for($user)->create([
         'name' => 'Owned project',
+        'position' => 1,
+    ]);
+    $pinnedGuideProject = Project::factory()->for($user)->guide()->create([
+        'name' => 'Pinned guide collection',
+        'position' => 2,
     ]);
     $favouriteProjectFile = Snippet::factory()->forProject($project)->create([
         'filename' => 'a-favourite.php',
@@ -110,6 +115,10 @@ test('workspace serializes distinct file favourites without leaking another acco
         'pinnable_type' => 'snippet',
         'pinnable_key' => (string) $pinnedProjectFile->id,
     ]);
+    Pin::factory()->for($user)->create([
+        'pinnable_type' => 'project',
+        'pinnable_key' => (string) $pinnedGuideProject->id,
+    ]);
 
     $otherUser = User::factory()->create();
     $otherProject = Project::factory()->for($otherUser)->create([
@@ -129,20 +138,24 @@ test('workspace serializes distinct file favourites without leaking another acco
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
             ->component('snippets/workspace')
-            ->has('projects', 1)
-            ->has('projects.0.snippets', 2)
-            ->where('projects.0.snippets.0.id', $favouriteProjectFile->id)
-            ->where('projects.0.snippets.0.is_favourite', true)
-            ->where('projects.0.snippets.0.is_pinned', false)
-            ->where('projects.0.snippets.1.id', $pinnedProjectFile->id)
-            ->where('projects.0.snippets.1.is_favourite', false)
-            ->where('projects.0.snippets.1.is_pinned', true)
+            ->has('projects', 2)
+            ->where('projects.0.id', $pinnedGuideProject->id)
+            ->where('projects.0.is_pinned', true)
+            ->where('projects.1.id', $project->id)
+            ->has('projects.1.snippets', 2)
+            ->where('projects.1.snippets.0.id', $pinnedProjectFile->id)
+            ->where('projects.1.snippets.0.is_favourite', false)
+            ->where('projects.1.snippets.0.is_pinned', true)
+            ->where('projects.1.snippets.1.id', $favouriteProjectFile->id)
+            ->where('projects.1.snippets.1.is_favourite', true)
+            ->where('projects.1.snippets.1.is_pinned', false)
             ->has('standalone_snippets', 2)
             ->where('standalone_snippets.0.id', $favouriteStandaloneFile->id)
             ->where('standalone_snippets.0.is_favourite', true)
             ->where('standalone_snippets.1.id', $regularStandaloneFile->id)
             ->where('standalone_snippets.1.is_favourite', false)
-            ->where('pins.snippet_ids', [$pinnedProjectFile->id]),
+            ->where('pins.snippet_ids', [$pinnedProjectFile->id])
+            ->where('pins.project_ids', [$pinnedGuideProject->id]),
         );
 });
 

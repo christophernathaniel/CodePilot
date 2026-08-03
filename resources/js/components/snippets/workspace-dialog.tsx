@@ -3,6 +3,7 @@ import {
     AlertTriangle,
     BookOpenText,
     Check,
+    FilePlus2,
     FolderPlus,
     GitBranchPlus,
     PackagePlus,
@@ -19,17 +20,21 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
+import { getClipboardFileDefaults } from '@/lib/snippets/clipboard-file';
 import type {
+    ClipboardSession,
     Framework,
     LanguageOption,
+    LibraryCategory,
     Snippet,
+    SnippetContentType,
     SnippetFolder,
     SnippetProject,
     SnippetVariation,
 } from '@/types';
 
 export type WorkspaceDialogState =
-    | { kind: 'create-project' }
+    | { kind: 'create-project'; category?: LibraryCategory | null }
     | {
           kind: 'create-folder';
           project: SnippetProject;
@@ -39,6 +44,7 @@ export type WorkspaceDialogState =
           kind: 'create-snippet';
           project: SnippetProject | null;
           folder: SnippetFolder | null;
+          sourceClipboard?: ClipboardSession;
       }
     | { kind: 'create-variation'; snippet: Snippet; source: string }
     | {
@@ -55,6 +61,7 @@ export type WorkspaceDialogState =
 export type WorkspaceDialogProps = {
     state: WorkspaceDialogState;
     projects: SnippetProject[];
+    libraryCategories: LibraryCategory[];
     languageOptions: LanguageOption[];
     frameworks: Framework[];
     processing: boolean;
@@ -84,6 +91,7 @@ type WorkspaceDialogBodyProps = Omit<WorkspaceDialogProps, 'state'> & {
 function WorkspaceDialogBody({
     state,
     projects,
+    libraryCategories,
     languageOptions,
     frameworks,
     processing,
@@ -100,6 +108,8 @@ function WorkspaceDialogBody({
 
     const configuration = getDialogConfiguration(state);
     const isDelete = state.kind === 'delete';
+    const isCreatingClipboardFile =
+        state.kind === 'create-snippet' && Boolean(state.sourceClipboard);
     const selectedProject =
         state.kind === 'create-snippet'
             ? projects.find(
@@ -119,6 +129,8 @@ function WorkspaceDialogBody({
                             <AlertTriangle className="size-4 text-rose-300" />
                         ) : state.kind === 'create-project' ? (
                             <PackagePlus className="size-4" />
+                        ) : isCreatingClipboardFile ? (
+                            <FilePlus2 className="size-4 text-code-accent" />
                         ) : isCreatingGuide ? (
                             <BookOpenText className="size-4 text-sky-200" />
                         ) : state.kind === 'create-folder' ? (
@@ -140,8 +152,8 @@ function WorkspaceDialogBody({
 
                 {isDelete ? (
                     <p className="rounded-md border border-rose-400/12 bg-rose-400/5 px-3 py-3 text-xs leading-5 text-rose-100/80">
-                        This removes the selected item and anything stored
-                        inside it. This action cannot be undone.
+                        The selected item and anything stored inside it will
+                        move to Trash. You can restore it later.
                     </p>
                 ) : (
                     <form
@@ -167,6 +179,15 @@ function WorkspaceDialogBody({
                                     autoFocus
                                     error={errors.name}
                                     onChange={setValue(setValues, 'name')}
+                                />
+                                <LibraryCategoryField
+                                    categories={libraryCategories}
+                                    value={values.library_category_id ?? ''}
+                                    error={errors.library_category_id}
+                                    onChange={setValue(
+                                        setValues,
+                                        'library_category_id',
+                                    )}
                                 />
                                 <label className="flex flex-col gap-1.5 text-xs text-code-muted">
                                     Type
@@ -226,6 +247,23 @@ function WorkspaceDialogBody({
 
                         {state.kind === 'create-snippet' && (
                             <>
+                                {state.sourceClipboard ? (
+                                    <div className="rounded-md border border-code-accent/20 bg-code-accent/6 px-3 py-2.5 text-[10px] leading-5 text-code-muted">
+                                        <p className="font-medium text-code-text">
+                                            {formatClipCount(
+                                                state.sourceClipboard
+                                                    .clips_count,
+                                            )}{' '}
+                                            from “{state.sourceClipboard.name}”
+                                        </p>
+                                        <p>
+                                            {isCreatingGuide
+                                                ? 'Each clip becomes a guide step with its source details, in the order shown.'
+                                                : 'Clips are saved top-to-bottom as shown, separated by a blank line.'}{' '}
+                                            The clipboard remains available.
+                                        </p>
+                                    </div>
+                                ) : null}
                                 <div className="grid grid-cols-2 gap-3">
                                     <label className="flex flex-col gap-1.5 text-xs text-code-muted">
                                         Location
@@ -243,26 +281,67 @@ function WorkspaceDialogBody({
                                                 const isGuideProject =
                                                     project?.kind === 'guide';
 
-                                                setValues((current) => ({
-                                                    ...current,
-                                                    project_id:
-                                                        event.target.value,
-                                                    folder_id: '',
-                                                    content_type: isGuideProject
-                                                        ? 'guide'
-                                                        : current.content_type,
-                                                    language:
-                                                        isGuideProject &&
-                                                        current.content_type !==
-                                                            'guide'
-                                                            ? 'markdown'
-                                                            : current.language,
-                                                    content:
-                                                        isGuideProject &&
-                                                        !current.content
-                                                            ? guideStarterSource
-                                                            : current.content,
-                                                }));
+                                                setValues((current) => {
+                                                    const currentContentType =
+                                                        (current.content_type ??
+                                                            'snippet') as SnippetContentType;
+                                                    const nextContentType =
+                                                        isGuideProject
+                                                            ? 'guide'
+                                                            : currentContentType;
+
+                                                    if (state.sourceClipboard) {
+                                                        const currentDefaults =
+                                                            getClipboardFileDefaults(
+                                                                state.sourceClipboard,
+                                                                languageOptions,
+                                                                currentContentType,
+                                                            );
+                                                        const nextDefaults =
+                                                            getClipboardFileDefaults(
+                                                                state.sourceClipboard,
+                                                                languageOptions,
+                                                                nextContentType,
+                                                            );
+
+                                                        return {
+                                                            ...current,
+                                                            project_id:
+                                                                event.target
+                                                                    .value,
+                                                            folder_id: '',
+                                                            content_type:
+                                                                nextContentType,
+                                                            language:
+                                                                nextDefaults.language,
+                                                            filename:
+                                                                current.filename ===
+                                                                currentDefaults.filename
+                                                                    ? nextDefaults.filename
+                                                                    : current.filename,
+                                                        };
+                                                    }
+
+                                                    return {
+                                                        ...current,
+                                                        project_id:
+                                                            event.target.value,
+                                                        folder_id: '',
+                                                        content_type:
+                                                            nextContentType,
+                                                        language:
+                                                            isGuideProject &&
+                                                            currentContentType !==
+                                                                'guide'
+                                                                ? 'markdown'
+                                                                : current.language,
+                                                        content:
+                                                            isGuideProject &&
+                                                            !current.content
+                                                                ? guideStarterSource
+                                                                : current.content,
+                                                    };
+                                                });
                                             }}
                                             className={inputClassName}
                                         >
@@ -338,24 +417,58 @@ function WorkspaceDialogBody({
                                         name="content_type"
                                         value={values.content_type ?? 'snippet'}
                                         onChange={(event) => {
-                                            const contentType =
-                                                event.target.value;
+                                            const contentType = event.target
+                                                .value as SnippetContentType;
+                                            setValues((current) => {
+                                                if (state.sourceClipboard) {
+                                                    const currentContentType =
+                                                        (current.content_type ??
+                                                            'snippet') as SnippetContentType;
+                                                    const currentDefaults =
+                                                        getClipboardFileDefaults(
+                                                            state.sourceClipboard,
+                                                            languageOptions,
+                                                            currentContentType,
+                                                        );
+                                                    const nextDefaults =
+                                                        getClipboardFileDefaults(
+                                                            state.sourceClipboard,
+                                                            languageOptions,
+                                                            contentType,
+                                                        );
 
-                                            setValues((current) => ({
-                                                ...current,
-                                                content_type: contentType,
-                                                language:
-                                                    contentType === 'guide' &&
-                                                    current.language ===
-                                                        'javascript'
-                                                        ? 'markdown'
-                                                        : current.language,
-                                                content:
-                                                    contentType === 'guide' &&
-                                                    !current.content
-                                                        ? guideStarterSource
-                                                        : current.content,
-                                            }));
+                                                    return {
+                                                        ...current,
+                                                        content_type:
+                                                            contentType,
+                                                        language:
+                                                            nextDefaults.language,
+                                                        filename:
+                                                            current.filename ===
+                                                            currentDefaults.filename
+                                                                ? nextDefaults.filename
+                                                                : current.filename,
+                                                    };
+                                                }
+
+                                                return {
+                                                    ...current,
+                                                    content_type: contentType,
+                                                    language:
+                                                        contentType ===
+                                                            'guide' &&
+                                                        current.language ===
+                                                            'javascript'
+                                                            ? 'markdown'
+                                                            : current.language,
+                                                    content:
+                                                        contentType ===
+                                                            'guide' &&
+                                                        !current.content
+                                                            ? guideStarterSource
+                                                            : current.content,
+                                                };
+                                            });
                                         }}
                                         disabled={
                                             selectedProject?.kind === 'guide'
@@ -404,6 +517,10 @@ function WorkspaceDialogBody({
                                     languageOptions={languageOptions}
                                     value={values.language ?? ''}
                                     error={errors.language}
+                                    disabled={
+                                        isCreatingClipboardFile &&
+                                        isCreatingGuide
+                                    }
                                     onChange={setValue(setValues, 'language')}
                                 />
                                 <FrameworkField
@@ -422,28 +539,30 @@ function WorkspaceDialogBody({
                                         )
                                     }
                                 />
-                                <label className="flex flex-col gap-1.5 text-xs text-code-muted">
-                                    {isCreatingGuide
-                                        ? 'Guide source'
-                                        : 'Starting code'}
-                                    <textarea
-                                        name="content"
-                                        value={values.content ?? ''}
-                                        onChange={setValue(
-                                            setValues,
-                                            'content',
-                                        )}
-                                        rows={7}
-                                        spellCheck={false}
-                                        placeholder={
-                                            isCreatingGuide
-                                                ? guideStarterSource
-                                                : undefined
-                                        }
-                                        className={`${inputClassName} h-auto resize-y py-2 font-mono text-[11px] leading-5`}
-                                    />
-                                    <FieldError message={errors.content} />
-                                </label>
+                                {!state.sourceClipboard ? (
+                                    <label className="flex flex-col gap-1.5 text-xs text-code-muted">
+                                        {isCreatingGuide
+                                            ? 'Guide source'
+                                            : 'Starting code'}
+                                        <textarea
+                                            name="content"
+                                            value={values.content ?? ''}
+                                            onChange={setValue(
+                                                setValues,
+                                                'content',
+                                            )}
+                                            rows={7}
+                                            spellCheck={false}
+                                            placeholder={
+                                                isCreatingGuide
+                                                    ? guideStarterSource
+                                                    : undefined
+                                            }
+                                            className={`${inputClassName} h-auto resize-y py-2 font-mono text-[11px] leading-5`}
+                                        />
+                                        <FieldError message={errors.content} />
+                                    </label>
+                                ) : null}
                                 <Field
                                     label="Tags"
                                     hint="Comma separated"
@@ -506,6 +625,15 @@ function WorkspaceDialogBody({
                                         error={errors.name}
                                         onChange={setValue(setValues, 'name')}
                                     />
+                                    <LibraryCategoryField
+                                        categories={libraryCategories}
+                                        value={values.library_category_id ?? ''}
+                                        error={errors.library_category_id}
+                                        onChange={setValue(
+                                            setValues,
+                                            'library_category_id',
+                                        )}
+                                    />
                                     <label className="flex flex-col gap-1.5 text-xs text-code-muted">
                                         Type
                                         <select
@@ -564,7 +692,10 @@ function WorkspaceDialogBody({
                                 <Field
                                     label={
                                         state.entity.type === 'snippet'
-                                            ? 'Snippet title'
+                                            ? state.entity.snippet
+                                                  .content_type === 'guide'
+                                                ? 'Guide title'
+                                                : 'Snippet title'
                                             : 'Name'
                                     }
                                     name={
@@ -723,7 +854,7 @@ function WorkspaceDialogBody({
                         {processing
                             ? 'Working…'
                             : isDelete
-                              ? 'Delete'
+                              ? 'Move to Trash'
                               : configuration.action}
                     </button>
                 </DialogFooter>
@@ -769,15 +900,49 @@ function Field({
     );
 }
 
+function LibraryCategoryField({
+    categories,
+    value,
+    error,
+    onChange,
+}: {
+    categories: LibraryCategory[];
+    value: string;
+    error?: string;
+    onChange: (event: React.ChangeEvent<HTMLSelectElement>) => void;
+}) {
+    return (
+        <label className="flex flex-col gap-1.5 text-xs text-code-muted">
+            Category
+            <select
+                name="library_category_id"
+                value={value}
+                onChange={onChange}
+                className={inputClassName}
+            >
+                <option value="">Uncategorised</option>
+                {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                        {category.name}
+                    </option>
+                ))}
+            </select>
+            <FieldError message={error} />
+        </label>
+    );
+}
+
 function LanguageField({
     languageOptions,
     value,
     error,
+    disabled = false,
     onChange,
 }: {
     languageOptions: LanguageOption[];
     value: string;
     error?: string;
+    disabled?: boolean;
     onChange: (event: React.ChangeEvent<HTMLSelectElement>) => void;
 }) {
     const hasCurrentLanguage = languageOptions.some(
@@ -790,6 +955,7 @@ function LanguageField({
             <select
                 name="language"
                 value={value}
+                disabled={disabled}
                 onChange={onChange}
                 className={inputClassName}
             >
@@ -887,7 +1053,7 @@ function FieldError({ message }: { message?: string }) {
 }
 
 const inputClassName =
-    'h-9 w-full rounded-md border border-code-border bg-code-canvas px-3 text-xs text-code-text outline-none placeholder:text-code-faint focus:border-code-accent/60';
+    'h-9 w-full rounded-md border border-code-border bg-code-canvas px-3 text-xs text-code-text outline-none placeholder:text-code-faint focus:border-code-accent/60 disabled:cursor-not-allowed disabled:opacity-50';
 
 const guideStarterSource = [
     '{!# guide-step: first-step | First step #!}',
@@ -917,7 +1083,7 @@ function getDialogKey(state: WorkspaceDialogState): string {
     }
 
     if (state.kind === 'create-project') {
-        return state.kind;
+        return `${state.kind}-${state.category?.id ?? 'uncategorised'}`;
     }
 
     if (state.kind === 'create-folder') {
@@ -925,7 +1091,7 @@ function getDialogKey(state: WorkspaceDialogState): string {
     }
 
     if (state.kind === 'create-snippet') {
-        return `${state.kind}-${state.project?.id ?? 'choose'}-${state.folder?.id ?? 'root'}`;
+        return `${state.kind}-${state.project?.id ?? 'choose'}-${state.folder?.id ?? 'root'}-${state.sourceClipboard?.id ?? 'blank'}`;
     }
 
     if (
@@ -952,7 +1118,12 @@ function getInitialValues(
     }
 
     if (state.kind === 'create-project') {
-        return { name: '', kind: 'project', description: '' };
+        return {
+            name: '',
+            library_category_id: String(state.category?.id ?? ''),
+            kind: 'project',
+            description: '',
+        };
     }
 
     if (state.kind === 'create-folder') {
@@ -960,6 +1131,18 @@ function getInitialValues(
     }
 
     if (state.kind === 'create-snippet') {
+        if (state.sourceClipboard) {
+            return {
+                ...getClipboardFileDefaults(
+                    state.sourceClipboard,
+                    languageOptions,
+                ),
+                tags: '',
+                project_id: String(state.project?.id ?? ''),
+                folder_id: String(state.folder?.id ?? ''),
+            };
+        }
+
         const defaultLanguage =
             languageOptions.find((language) => language.value === 'javascript')
                 ?.value ??
@@ -1010,6 +1193,9 @@ function getInitialValues(
         if (state.entity.type === 'project') {
             return {
                 name: state.entity.project.name,
+                library_category_id: String(
+                    state.entity.project.library_category_id ?? '',
+                ),
                 kind: state.entity.project.kind,
                 description: state.entity.project.description ?? '',
             };
@@ -1055,6 +1241,15 @@ function getDialogConfiguration(state: NonNullable<WorkspaceDialogState>) {
                 action: 'Create folder',
             };
         case 'create-snippet':
+            if (state.sourceClipboard) {
+                return {
+                    title: 'Create file from clipboard',
+                    description:
+                        'Choose where this clipboard belongs and save its clips as one editable file.',
+                    action: 'Create file',
+                };
+            }
+
             if (state.project?.kind === 'guide') {
                 return {
                     title: 'New guide',
@@ -1100,15 +1295,21 @@ function getDialogConfiguration(state: NonNullable<WorkspaceDialogState>) {
             };
         case 'delete':
             return {
-                title: `Delete ${getEntityName(state.entity)}?`,
-                description: 'Review the impact before continuing.',
-                action: 'Delete',
+                title: `Move ${getEntityName(state.entity)} to Trash?`,
+                description:
+                    'Deleted items stay recoverable until you permanently delete them from Trash.',
+                action: 'Move to Trash',
             };
         case 'metadata':
             return {
-                title: 'Snippet details',
+                title:
+                    state.snippet.content_type === 'guide'
+                        ? 'Guide details'
+                        : 'Snippet details',
                 description:
-                    'Language, frameworks, and tags make this snippet easier to find.',
+                    state.snippet.content_type === 'guide'
+                        ? 'File type, language, frameworks, and tags make this guide easier to find.'
+                        : 'Language, frameworks, and tags make this snippet easier to find.',
                 action: 'Save details',
             };
         case 'create-preset':
@@ -1127,7 +1328,13 @@ function normalizePayload(
     frameworkNames: string[],
 ): Record<string, FormDataConvertible> {
     if (state.kind === 'create-project') {
-        return { ...values, frameworks: frameworkNames };
+        return {
+            ...values,
+            library_category_id: values.library_category_id
+                ? Number(values.library_category_id)
+                : null,
+            frameworks: frameworkNames,
+        };
     }
 
     if (state.kind === 'create-folder') {
@@ -1135,7 +1342,7 @@ function normalizePayload(
     }
 
     if (state.kind === 'create-snippet') {
-        return {
+        const payload: Record<string, FormDataConvertible> = {
             ...values,
             project_id: values.project_id ? Number(values.project_id) : null,
             folder_id: values.folder_id ? Number(values.folder_id) : null,
@@ -1145,6 +1352,12 @@ function normalizePayload(
                 .filter(Boolean),
             frameworks: frameworkNames,
         };
+
+        if (state.sourceClipboard) {
+            delete payload.content;
+        }
+
+        return payload;
     }
 
     if (state.kind === 'rename-variation') {
@@ -1166,7 +1379,13 @@ function normalizePayload(
     }
 
     if (state.kind === 'rename' && state.entity.type === 'project') {
-        return { ...values, frameworks: frameworkNames };
+        return {
+            ...values,
+            library_category_id: values.library_category_id
+                ? Number(values.library_category_id)
+                : null,
+            frameworks: frameworkNames,
+        };
     }
 
     return values;
@@ -1181,7 +1400,7 @@ function getEntityName(entity: ExplorerEntity): string {
         return entity.folder.name;
     }
 
-    return entity.snippet.title;
+    return entity.snippet.filename;
 }
 
 function getFolderLabel(project: SnippetProject, folderId: number): string {
@@ -1205,6 +1424,10 @@ function getFolderLabel(project: SnippetProject, folderId: number): string {
     }
 
     return path.join(' / ');
+}
+
+function formatClipCount(count: number): string {
+    return `${count} ${count === 1 ? 'clip' : 'clips'}`;
 }
 
 function setValue(

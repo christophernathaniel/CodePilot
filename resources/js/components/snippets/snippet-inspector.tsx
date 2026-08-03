@@ -80,8 +80,11 @@ export function SnippetInspector({
     );
 
     return (
-        <aside className="flex w-72 shrink-0 flex-col border-l border-code-border bg-code-panel xl:w-80">
-            <div className="flex h-12 shrink-0 items-center gap-2 border-b border-code-border px-4">
+        <aside
+            id="workspace-inspector-panel"
+            className="flex h-full w-full min-w-0 shrink-0 flex-col bg-code-panel"
+        >
+            <div className="flex h-12 shrink-0 items-center gap-2 px-4">
                 <SnippetFileIcon
                     language={snippet.language}
                     contentType={snippet.content_type}
@@ -98,21 +101,21 @@ export function SnippetInspector({
                     type="button"
                     onClick={onEditMetadata}
                     className="rounded p-1.5 text-code-faint transition hover:bg-code-hover hover:text-code-text"
-                    aria-label="Edit snippet details"
+                    aria-label={`Edit ${snippet.content_type === 'guide' ? 'guide' : 'snippet'} details`}
                 >
                     <SlidersHorizontal className="size-3.5" />
                 </button>
             </div>
 
-            <div className="border-b border-code-border px-3 py-3">
+            <div className="px-3 py-3">
                 <div className="flex flex-wrap gap-1.5">
-                    <span className="inline-flex h-5 items-center gap-1 rounded border border-code-border bg-code-raised px-1.5 text-[9px] font-medium text-code-text">
+                    <span className="inline-flex h-5 items-center gap-1 rounded bg-code-raised px-1.5 text-[9px] font-medium text-code-text">
                         <Tag className="size-2.5" /> {snippet.language}
                     </span>
                     {snippet.frameworks.map((framework) => (
                         <span
                             key={framework.id}
-                            className="inline-flex h-5 items-center gap-1 rounded border border-sky-400/20 bg-sky-400/5 px-1.5 text-[9px] text-sky-200"
+                            className="inline-flex h-5 items-center gap-1 rounded bg-sky-400/5 px-1.5 text-[9px] text-sky-200"
                         >
                             <Layers3 className="size-2.5" /> {framework.name}
                         </span>
@@ -120,11 +123,10 @@ export function SnippetInspector({
                     {snippet.tags.map((tag) => (
                         <span
                             key={tag.id}
-                            className="inline-flex h-5 items-center rounded border border-code-border bg-code-canvas/45 px-1.5 text-[9px] text-code-muted"
+                            className="inline-flex h-5 items-center rounded bg-code-canvas/45 px-1.5 text-[9px] text-code-muted"
                             style={
                                 tag.color
                                     ? {
-                                          borderColor: `${tag.color}33`,
                                           color: tag.color,
                                       }
                                     : undefined
@@ -152,7 +154,7 @@ export function SnippetInspector({
                 </p>
             </div>
 
-            <div className="grid h-9 shrink-0 grid-cols-3 border-b border-code-border p-1">
+            <div className="grid h-9 shrink-0 grid-cols-3 bg-code-canvas/20 p-1">
                 <InspectorTab
                     active={view === 'variables'}
                     onClick={() => setView('variables')}
@@ -190,7 +192,7 @@ export function SnippetInspector({
                                     ) ?? null,
                                 );
                             }}
-                            className="h-8 min-w-0 flex-1 rounded border border-code-border bg-code-canvas px-2 text-[10px] text-code-text outline-none focus:border-code-accent/60"
+                            className="h-8 min-w-0 flex-1 rounded bg-code-canvas px-2 text-[10px] text-code-text outline-none focus-visible:ring-1 focus-visible:ring-code-accent/60"
                         >
                             <option value="">My default</option>
                             {snippet.presets.map((preset) => (
@@ -204,14 +206,14 @@ export function SnippetInspector({
                             onClick={onCreatePreset}
                             disabled={variables.length === 0}
                             aria-label="Create preset"
-                            className="flex size-8 items-center justify-center rounded border border-code-border text-code-faint transition hover:bg-code-hover hover:text-code-text disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-code-faint"
+                            className="flex size-8 items-center justify-center rounded bg-code-raised text-code-faint transition hover:bg-code-hover hover:text-code-text disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-code-faint"
                         >
                             <Plus className="size-3.5" />
                         </button>
                     </div>
 
                     {variables.length === 0 ? (
-                        <div className="rounded-lg border border-dashed border-code-border px-3 py-5 text-center">
+                        <div className="rounded-lg bg-code-canvas/35 px-3 py-5 text-center">
                             <Variable className="mx-auto mb-2 size-4 text-code-faint" />
                             <p className="text-[10px] leading-4 text-code-muted">
                                 Add{' '}
@@ -247,14 +249,14 @@ export function SnippetInspector({
                                                 event.target.value,
                                             )
                                         }
-                                        className="h-8 rounded border border-code-border bg-code-canvas px-2.5 font-mono text-[11px] text-code-text outline-none placeholder:text-code-faint focus:border-code-accent/60"
+                                        className="h-8 rounded bg-code-canvas px-2.5 font-mono text-[11px] text-code-text outline-none placeholder:text-code-faint focus-visible:ring-1 focus-visible:ring-code-accent/60"
                                     />
                                 </label>
                             ))}
                         </div>
                     )}
 
-                    <div className="mt-4 border-t border-code-border pt-3">
+                    <div className="mt-4 pt-3">
                         {selectedPreset ? (
                             <div className="flex gap-2">
                                 <button
@@ -272,7 +274,7 @@ export function SnippetInspector({
                                         onDeletePreset(selectedPreset)
                                     }
                                     aria-label="Delete selected preset"
-                                    className="flex size-8 items-center justify-center rounded border border-rose-400/15 text-rose-300/70 transition hover:bg-rose-400/8 hover:text-rose-200"
+                                    className="flex size-8 items-center justify-center rounded bg-rose-400/5 text-rose-300/70 transition hover:bg-rose-400/8 hover:text-rose-200"
                                 >
                                     <Trash2 className="size-3" />
                                 </button>
@@ -290,17 +292,22 @@ export function SnippetInspector({
                     <div className="mb-3 flex items-start justify-between gap-3">
                         <div>
                             <p className="text-[10px] font-medium text-code-text">
-                                Code variations
+                                {snippet.content_type === 'guide'
+                                    ? 'Guide variations'
+                                    : 'Code variations'}
                             </p>
                             <p className="mt-1 text-[9px] leading-4 text-code-faint">
-                                Alternate implementations of this snippet — not
-                                revision history.
+                                Alternate implementations of this{' '}
+                                {snippet.content_type === 'guide'
+                                    ? 'guide'
+                                    : 'snippet'}{' '}
+                                — not revision history.
                             </p>
                         </div>
                         <button
                             type="button"
                             onClick={onCreateVariation}
-                            className="flex h-7 shrink-0 items-center gap-1.5 rounded border border-code-border bg-code-canvas px-2 text-[9px] font-medium text-code-muted transition hover:bg-code-hover hover:text-code-text"
+                            className="flex h-7 shrink-0 items-center gap-1.5 rounded bg-code-canvas px-2 text-[9px] font-medium text-code-muted transition hover:bg-code-hover hover:text-code-text"
                         >
                             <Plus className="size-3" /> New
                         </button>
@@ -319,10 +326,10 @@ export function SnippetInspector({
                                 <div
                                     key={variation.id}
                                     className={cn(
-                                        'rounded-md border transition',
+                                        'rounded-md transition',
                                         isActive
-                                            ? 'border-code-border bg-code-raised'
-                                            : 'border-transparent hover:border-code-border/60 hover:bg-code-hover',
+                                            ? 'bg-code-raised'
+                                            : 'hover:bg-code-hover',
                                     )}
                                 >
                                     <button
@@ -361,7 +368,7 @@ export function SnippetInspector({
                                     </button>
 
                                     {isActive && (
-                                        <div className="grid grid-cols-3 gap-1 border-t border-code-border/70 p-1.5">
+                                        <div className="grid grid-cols-3 gap-1 p-1.5">
                                             <VariationAction
                                                 label="Rename"
                                                 onClick={() =>
@@ -393,7 +400,7 @@ export function SnippetInspector({
                                                     variation.is_default
                                                         ? 'Choose another default before deleting this variation.'
                                                         : isOnlyVariation
-                                                          ? 'A snippet must keep at least one variation.'
+                                                          ? `A ${snippet.content_type === 'guide' ? 'guide' : 'snippet'} must keep at least one variation.`
                                                           : 'Delete variation'
                                                 }
                                                 onClick={() =>
@@ -420,7 +427,7 @@ export function SnippetInspector({
                         </p>
                     </div>
 
-                    <div className="mb-3 rounded-md border border-sky-400/15 bg-sky-400/5 px-2.5 py-2 text-[9px] leading-4 text-sky-100/70">
+                    <div className="mb-3 rounded-md bg-sky-400/5 px-2.5 py-2 text-[9px] leading-4 text-sky-100/70">
                         Each section inherits this file&apos;s{' '}
                         <span className="font-medium text-sky-100">
                             {snippet.language}
@@ -429,12 +436,12 @@ export function SnippetInspector({
                     </div>
 
                     {sections.length === 0 ? (
-                        <div className="rounded-lg border border-dashed border-code-border px-3 py-5 text-center">
+                        <div className="rounded-lg bg-code-canvas/35 px-3 py-5 text-center">
                             <Braces className="mx-auto mb-2 size-4 text-code-faint" />
                             <p className="text-[10px] leading-4 text-code-muted">
                                 Add this marker before each reusable section:
                             </p>
-                            <code className="mt-2 block rounded border border-code-border bg-code-canvas px-2 py-1.5 text-[9px] text-sky-200">
+                            <code className="mt-2 block rounded bg-code-canvas px-2 py-1.5 text-[9px] text-sky-200">
                                 {'{!# snippet: snippet_name #!}'}
                             </code>
                             <p className="mt-2 text-[9px] leading-4 text-code-faint">
@@ -457,10 +464,10 @@ export function SnippetInspector({
                                     <div
                                         key={section.key}
                                         className={cn(
-                                            'overflow-hidden rounded-md border transition',
+                                            'overflow-hidden rounded-md transition',
                                             isActive
-                                                ? 'border-sky-400/30 bg-sky-400/5'
-                                                : 'border-code-border bg-code-canvas/35 hover:border-code-muted/50',
+                                                ? 'bg-sky-400/5'
+                                                : 'bg-code-canvas/35 hover:bg-code-hover',
                                         )}
                                     >
                                         <button
@@ -489,7 +496,7 @@ export function SnippetInspector({
                                             </span>
                                         </button>
 
-                                        <div className="grid grid-cols-2 gap-1 border-t border-code-border/70 p-1.5">
+                                        <div className="grid grid-cols-2 gap-1 p-1.5">
                                             <SectionAction
                                                 label="Open section"
                                                 disabled={!onSectionSelect}

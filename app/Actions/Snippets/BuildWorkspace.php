@@ -2,8 +2,11 @@
 
 namespace App\Actions\Snippets;
 
+use App\Models\ClipboardClip;
+use App\Models\ClipboardSession;
 use App\Models\Folder;
 use App\Models\Framework;
+use App\Models\LibraryCategory;
 use App\Models\Project;
 use App\Models\Snippet;
 use App\Models\SnippetVariation;
@@ -35,6 +38,23 @@ final class BuildWorkspace
             ->map(fn ($pins): array => array_fill_keys($pins->pluck('pinnable_key')->all(), true))
             ->all();
 
+        $clipboardSessions = $user->clipboardSessions()
+            ->withCount('clips')
+            ->orderByDesc('is_active')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->get();
+        $activeClipboardSession = $clipboardSessions->firstWhere('is_active', true);
+
+        $activeClipboardSession?->load([
+            'clips' => fn ($query) => $query->orderByDesc('created_at')->orderByDesc('id'),
+        ]);
+
+        $libraryCategories = $user->libraryCategories()
+            ->orderBy('position')
+            ->orderBy('name')
+            ->get();
+
         $projects = $user->projects()
             ->with([
                 'folders' => fn ($query) => $query->orderBy('position')->orderBy('name'),
@@ -42,7 +62,9 @@ final class BuildWorkspace
             ])
             ->orderBy('position')
             ->orderBy('name')
-            ->get();
+            ->get()
+            ->sortByDesc(fn (Project $project): bool => $this->isPinned('project', (string) $project->id))
+            ->values();
 
         $snippets = $user->snippets()
             ->with([
@@ -58,7 +80,9 @@ final class BuildWorkspace
             ->withMax('copyEvents as last_copied_at', 'created_at')
             ->orderBy('position')
             ->orderBy('filename')
-            ->get();
+            ->get()
+            ->sortByDesc(fn (Snippet $snippet): bool => $this->isPinned('snippet', (string) $snippet->id))
+            ->values();
 
         $maximumRecentCopies = max(1, (int) $snippets->max('copies_30d'));
         $snippetsByProject = $snippets->whereNotNull('project_id')->groupBy('project_id');
@@ -74,6 +98,20 @@ final class BuildWorkspace
         );
 
         return [
+            'library_categories' => array_values(
+                $libraryCategories
+                    ->map(fn (LibraryCategory $libraryCategory): array => [
+                        'id' => $libraryCategory->id,
+                        'name' => $libraryCategory->name,
+                        'position' => $libraryCategory->position,
+                    ])
+                    ->all(),
+            ),
+            'clipboard_sessions' => array_values(
+                $clipboardSessions
+                    ->map(fn (ClipboardSession $clipboardSession): array => $this->clipboardSession($clipboardSession))
+                    ->all(),
+            ),
             'projects' => array_values(
                 $projects->map(fn (Project $project): array => $this->project($project, $maximumRecentCopies))->all(),
             ),
@@ -108,6 +146,120 @@ final class BuildWorkspace
                     array_values($frameworks->map(fn (Framework $framework): int => $framework->id)->all()),
                 ),
             ],
+            'trash' => $this->trash($user),
+        ];
+    }
+
+    /** @return array{projects: list<array<string, mixed>>, folders: list<array<string, mixed>>, snippets: list<array<string, mixed>>} */
+    private function trash(User $user): array
+    {
+        $trashedProjects = $user->projects()
+            ->onlyTrashed()
+            ->latest('deleted_at')
+            ->get();
+        $trashedFolders = Folder::onlyTrashed()
+            ->whereHas('project', fn (Builder $query) => $query->where('user_id', $user->id))
+            ->with('project:id,name')
+            ->latest('deleted_at')
+            ->get();
+        $trashedFoldersById = $trashedFolders->keyBy('id');
+        $visibleFolders = $trashedFolders->filter(
+            fn (Folder $folder): bool => $folder->parent_id === null
+                || ! $trashedFoldersById->has($folder->parent_id),
+        );
+        $trashedSnippets = $user->snippets()
+            ->onlyTrashed()
+            ->where(function (Builder $query): void {
+                $query
+                    ->whereNull('project_id')
+                    ->orWhereHas('project');
+            })
+            ->with(['project:id,name', 'folder:id,name'])
+            ->latest('deleted_at')
+            ->get()
+            ->filter(
+                fn (Snippet $snippet): bool => $snippet->folder_id === null
+                    || ! $trashedFoldersById->has($snippet->folder_id),
+            );
+
+        return [
+            'projects' => $trashedProjects
+                ->map(fn (Project $project): array => [
+                    'type' => 'project',
+                    'id' => $project->id,
+                    'name' => $project->name,
+                    'context' => match ($project->kind) {
+                        Project::KIND_BUNDLE => 'Snippet bundle',
+                        Project::KIND_GUIDE => 'Guide collection',
+                        default => 'Project',
+                    },
+                    'deleted_at' => $this->timestamp($project->deleted_at),
+                ])
+                ->values()
+                ->all(),
+            'folders' => $visibleFolders
+                ->map(fn (Folder $folder): array => [
+                    'type' => 'folder',
+                    'id' => $folder->id,
+                    'name' => $folder->name,
+                    'context' => $folder->project->name,
+                    'deleted_at' => $this->timestamp($folder->deleted_at),
+                ])
+                ->values()
+                ->all(),
+            'snippets' => $trashedSnippets
+                ->map(fn (Snippet $snippet): array => [
+                    'type' => 'snippet',
+                    'id' => $snippet->id,
+                    'name' => $snippet->filename,
+                    'context' => $snippet->project?->name ?? 'Standalone',
+                    'deleted_at' => $this->timestamp($snippet->deleted_at),
+                ])
+                ->values()
+                ->all(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function clipboardSession(ClipboardSession $clipboardSession): array
+    {
+        return [
+            'id' => $clipboardSession->id,
+            'name' => $clipboardSession->name,
+            'is_active' => $clipboardSession->is_active,
+            'clips_count' => (int) $clipboardSession->getAttribute('clips_count'),
+            'created_at' => $this->timestamp($clipboardSession->created_at),
+            'updated_at' => $this->timestamp($clipboardSession->updated_at),
+            'clips' => $clipboardSession->relationLoaded('clips')
+                ? $clipboardSession->clips
+                    ->map(fn (ClipboardClip $clipboardClip): array => $this->clipboardClip($clipboardClip))
+                    ->all()
+                : [],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function clipboardClip(ClipboardClip $clipboardClip): array
+    {
+        $sourceFolders = $clipboardClip->getAttribute('source_folders');
+
+        return [
+            'id' => $clipboardClip->id,
+            'content' => $clipboardClip->content,
+            'language' => $clipboardClip->language,
+            'representation' => $clipboardClip->representation,
+            'created_at' => $this->timestamp($clipboardClip->created_at),
+            'source' => [
+                'snippet_id' => $clipboardClip->snippet_id,
+                'variation_id' => $clipboardClip->snippet_variation_id,
+                'title' => $clipboardClip->source_title,
+                'filename' => $clipboardClip->source_filename,
+                'project' => $clipboardClip->source_project,
+                'folders' => is_array($sourceFolders) ? array_values($sourceFolders) : [],
+                'variation' => $clipboardClip->source_variation,
+                'line_start' => $clipboardClip->line_start,
+                'line_end' => $clipboardClip->line_end,
+            ],
         ];
     }
 
@@ -116,6 +268,7 @@ final class BuildWorkspace
     {
         return [
             'id' => $project->id,
+            'library_category_id' => $project->library_category_id,
             'name' => $project->name,
             'kind' => $project->kind,
             'description' => $project->description,

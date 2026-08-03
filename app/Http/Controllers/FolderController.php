@@ -2,6 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Actions\Library\MoveItemToTrash;
+use App\Actions\Library\PermanentlyDeleteItem;
+use App\Actions\Library\RestoreItemFromTrash;
 use App\Http\Requests\Folders\StoreFolderRequest;
 use App\Http\Requests\Folders\UpdateFolderRequest;
 use App\Models\Folder;
@@ -33,13 +36,37 @@ class FolderController extends Controller
         return back();
     }
 
-    public function destroy(Project $project, Folder $folder): RedirectResponse
+    public function destroy(Project $project, Folder $folder, MoveItemToTrash $moveItemToTrash): RedirectResponse
     {
         Gate::authorize('delete', $folder);
 
-        $folder->delete();
+        $moveItemToTrash->handle($folder);
 
-        Inertia::flash('toast', ['type' => 'success', 'message' => __('Folder deleted.')]);
+        Inertia::flash('toast', ['type' => 'success', 'message' => __('Folder moved to Trash.')]);
+
+        return back();
+    }
+
+    public function restore(Folder $folder, RestoreItemFromTrash $restoreItemFromTrash): RedirectResponse
+    {
+        abort_unless($folder->trashed(), 404);
+        Gate::authorize('restore', $folder);
+
+        $restoreItemFromTrash->handle($folder);
+
+        Inertia::flash('toast', ['type' => 'success', 'message' => __('Folder restored.')]);
+
+        return back();
+    }
+
+    public function forceDestroy(Folder $folder, PermanentlyDeleteItem $permanentlyDeleteItem): RedirectResponse
+    {
+        abort_unless($folder->trashed(), 404);
+        Gate::authorize('forceDelete', $folder);
+
+        $permanentlyDeleteItem->handle($folder);
+
+        Inertia::flash('toast', ['type' => 'success', 'message' => __('Folder permanently deleted.')]);
 
         return back();
     }

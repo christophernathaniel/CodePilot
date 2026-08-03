@@ -1,12 +1,18 @@
+import { ClipboardPlus, Copy } from 'lucide-react';
 import {
     forwardRef,
+    useEffect,
     useImperativeHandle,
     useMemo,
     useRef,
     useState,
 } from 'react';
-import type { ClipboardEvent, KeyboardEvent } from 'react';
+import type { ClipboardEvent, KeyboardEvent, MouseEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { SyntaxHighlightedText } from '@/components/snippets/syntax-highlighted-code';
+import { useClipboard } from '@/hooks/use-clipboard';
+import { createClipboardSelection } from '@/lib/snippets/clipboard-selection';
+import type { ClipboardSelection } from '@/lib/snippets/clipboard-selection';
 
 export type SnippetEditorHandle = {
     focus: () => void;
@@ -19,10 +25,18 @@ type Props = {
     language: string;
     readOnly?: boolean;
     preview?: boolean;
+    activeClipboardName?: string | null;
     onChange: (value: string) => void;
     onSave: () => void;
-    onCopy?: (selectionLength: number) => void;
+    onCopy?: (selectionLength: number, method: 'keyboard' | 'button') => void;
+    onAddToClipboard?: (selection: ClipboardSelection) => void;
     onCursorChange?: (line: number, column: number) => void;
+};
+
+type SelectionContextMenuState = {
+    selection: ClipboardSelection;
+    x: number;
+    y: number;
 };
 
 export const SnippetEditor = forwardRef<SnippetEditorHandle, Props>(
@@ -32,25 +46,66 @@ export const SnippetEditor = forwardRef<SnippetEditorHandle, Props>(
             language,
             readOnly = false,
             preview = false,
+            activeClipboardName = null,
             onChange,
             onSave,
             onCopy,
+            onAddToClipboard,
             onCursorChange,
         },
         ref,
     ) {
         const textareaRef = useRef<HTMLTextAreaElement>(null);
+        const contextMenuRef = useRef<HTMLDivElement>(null);
+        const [, copyToSystemClipboard] = useClipboard();
+        const [contextMenu, setContextMenu] =
+            useState<SelectionContextMenuState | null>(null);
         const [scrollPosition, setScrollPosition] = useState({
             left: 0,
             top: 0,
         });
         const lineCount = Math.max(1, value.split('\n').length);
         const highlightedSource = useMemo(
-            () => (
-                <SyntaxHighlightedText source={value} language={language} />
-            ),
+            () => <SyntaxHighlightedText source={value} language={language} />,
             [language, value],
         );
+
+        useEffect(() => {
+            if (!contextMenu) {
+                return;
+            }
+
+            const focusFrame = window.requestAnimationFrame(() => {
+                contextMenuRef.current
+                    ?.querySelector<HTMLButtonElement>(
+                        '[role="menuitem"]:not(:disabled)',
+                    )
+                    ?.focus();
+            });
+            const closeOnPointerDown = (event: PointerEvent) => {
+                if (
+                    event.target instanceof Node &&
+                    !contextMenuRef.current?.contains(event.target)
+                ) {
+                    setContextMenu(null);
+                }
+            };
+            const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+                if (event.key === 'Escape') {
+                    setContextMenu(null);
+                    textareaRef.current?.focus();
+                }
+            };
+
+            window.addEventListener('pointerdown', closeOnPointerDown);
+            window.addEventListener('keydown', closeOnEscape);
+
+            return () => {
+                window.cancelAnimationFrame(focusFrame);
+                window.removeEventListener('pointerdown', closeOnPointerDown);
+                window.removeEventListener('keydown', closeOnEscape);
+            };
+        }, [contextMenu]);
 
         useImperativeHandle(ref, () => ({
             focus() {
@@ -100,7 +155,57 @@ export const SnippetEditor = forwardRef<SnippetEditorHandle, Props>(
             },
         }));
 
+        const openContextMenu = (
+            textarea: HTMLTextAreaElement,
+            position: { x: number; y: number },
+        ): boolean => {
+            const selection = createClipboardSelection(
+                textarea.value,
+                textarea.selectionStart,
+                textarea.selectionEnd,
+            );
+
+            if (!selection) {
+                setContextMenu(null);
+
+                return false;
+            }
+
+            setContextMenu({ selection, ...position });
+
+            return true;
+        };
+
+        const handleContextMenu = (event: MouseEvent<HTMLTextAreaElement>) => {
+            if (
+                openContextMenu(event.currentTarget, {
+                    x: event.clientX,
+                    y: event.clientY,
+                })
+            ) {
+                event.preventDefault();
+            }
+        };
+
         const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+            if (
+                event.key === 'ContextMenu' ||
+                (event.shiftKey && event.key === 'F10')
+            ) {
+                const bounds = event.currentTarget.getBoundingClientRect();
+
+                if (
+                    openContextMenu(event.currentTarget, {
+                        x: bounds.left + Math.min(bounds.width, 88),
+                        y: bounds.top + Math.min(bounds.height, 48),
+                    })
+                ) {
+                    event.preventDefault();
+                }
+
+                return;
+            }
+
             if ((event.metaKey || event.ctrlKey) && event.key === 's') {
                 event.preventDefault();
                 onSave();
@@ -126,6 +231,74 @@ export const SnippetEditor = forwardRef<SnippetEditorHandle, Props>(
                 textarea.selectionEnd = selectionStart + indentation.length;
                 reportCursor(textarea, onCursorChange);
             });
+        };
+
+        const closeContextMenu = () => {
+            setContextMenu(null);
+            textareaRef.current?.focus();
+        };
+
+        const handleContextMenuKeyDown = (
+            event: KeyboardEvent<HTMLDivElement>,
+        ) => {
+            if (event.key === 'Tab') {
+                setContextMenu(null);
+
+                return;
+            }
+
+            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+                return;
+            }
+
+            const menuItems = Array.from(
+                contextMenuRef.current?.querySelectorAll<HTMLButtonElement>(
+                    '[role="menuitem"]:not(:disabled)',
+                ) ?? [],
+            );
+
+            if (menuItems.length === 0) {
+                return;
+            }
+
+            event.preventDefault();
+
+            if (event.key === 'Home') {
+                menuItems[0]?.focus();
+
+                return;
+            }
+
+            if (event.key === 'End') {
+                menuItems.at(-1)?.focus();
+
+                return;
+            }
+
+            const currentIndex = menuItems.findIndex(
+                (menuItem) => menuItem === document.activeElement,
+            );
+            const direction = event.key === 'ArrowDown' ? 1 : -1;
+            const nextIndex =
+                (currentIndex + direction + menuItems.length) %
+                menuItems.length;
+
+            menuItems[nextIndex]?.focus();
+        };
+
+        const copyContextSelection = async () => {
+            if (!contextMenu) {
+                return;
+            }
+
+            const { selection } = contextMenu;
+            const wasCopied = await copyToSystemClipboard(selection.content);
+
+            if (wasCopied) {
+                onCopy?.(selection.content.length, 'button');
+            }
+
+            closeContextMenu();
         };
 
         return (
@@ -177,6 +350,7 @@ export const SnippetEditor = forwardRef<SnippetEditorHandle, Props>(
                               : `${language} snippet editor`
                     }
                     onChange={(event) => onChange(event.target.value)}
+                    onContextMenu={handleContextMenu}
                     onKeyDown={handleKeyDown}
                     onCopy={(event: ClipboardEvent<HTMLTextAreaElement>) => {
                         const selectionLength = Math.abs(
@@ -185,7 +359,7 @@ export const SnippetEditor = forwardRef<SnippetEditorHandle, Props>(
                         );
 
                         if (selectionLength > 0) {
-                            onCopy?.(selectionLength);
+                            onCopy?.(selectionLength, 'keyboard');
                         }
                     }}
                     onScroll={(event) =>
@@ -206,6 +380,47 @@ export const SnippetEditor = forwardRef<SnippetEditorHandle, Props>(
                         WebkitTextFillColor: 'transparent',
                     }}
                 />
+                {contextMenu
+                    ? createPortal(
+                          <div
+                              ref={contextMenuRef}
+                              role="menu"
+                              aria-label="Selected code actions"
+                              onKeyDown={handleContextMenuKeyDown}
+                              className="fixed z-100 w-56 max-w-[calc(100vw-1rem)] rounded-md border border-code-border bg-code-raised p-1 text-[11px] text-code-text shadow-2xl"
+                              style={selectionContextMenuPosition(contextMenu)}
+                          >
+                              <button
+                                  type="button"
+                                  role="menuitem"
+                                  disabled={!onAddToClipboard}
+                                  onClick={() => {
+                                      onAddToClipboard?.(contextMenu.selection);
+                                      closeContextMenu();
+                                  }}
+                                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left outline-none hover:bg-code-hover focus:bg-code-hover disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                  <ClipboardPlus className="size-3.5 text-code-muted" />
+                                  <span className="min-w-0 truncate">
+                                      {activeClipboardName
+                                          ? `Add to ${activeClipboardName}`
+                                          : 'Add to new clipboard'}
+                                  </span>
+                              </button>
+                              <div className="my-1 h-px bg-code-border" />
+                              <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => void copyContextSelection()}
+                                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left outline-none hover:bg-code-hover focus:bg-code-hover"
+                              >
+                                  <Copy className="size-3.5 text-code-muted" />
+                                  Copy selection
+                              </button>
+                          </div>,
+                          document.body,
+                      )
+                    : null}
                 {readOnly && (
                     <div className="pointer-events-none absolute top-3 right-4 z-30 rounded border border-code-border bg-code-raised px-2 py-1 text-[9px] font-semibold tracking-[0.12em] text-code-muted uppercase">
                         {preview ? 'Rendered preview' : 'Read-only source'}
@@ -227,4 +442,14 @@ function reportCursor(
     const beforeCursor = textarea.value.slice(0, textarea.selectionStart);
     const lines = beforeCursor.split('\n');
     onCursorChange(lines.length, (lines.at(-1)?.length ?? 0) + 1);
+}
+
+function selectionContextMenuPosition({ x, y }: SelectionContextMenuState): {
+    left: number;
+    top: number;
+} {
+    return {
+        left: Math.max(8, Math.min(x, window.innerWidth - 232)),
+        top: Math.max(8, Math.min(y, window.innerHeight - 88)),
+    };
 }

@@ -95,7 +95,7 @@ class SnippetExamplesSeeder extends Seeder
             attributes: [
                 'name' => 'Loop Recipes',
                 'kind' => 'bundle',
-                'description' => 'Copy-ready foreach patterns with named code variations and reusable variable presets.',
+                'description' => 'Copy-ready PHP, Twig, and JavaScript loop patterns in separate files.',
                 'position' => 2,
             ],
         );
@@ -111,6 +111,10 @@ class SnippetExamplesSeeder extends Seeder
         $phpFolder = $bundle->folders()->firstOrCreate(
             ['parent_id' => null, 'name' => 'PHP'],
             ['position' => 1],
+        );
+        $javascriptFolder = $bundle->folders()->firstOrCreate(
+            ['parent_id' => null, 'name' => 'JavaScript'],
+            ['position' => 2],
         );
         $componentsFolder = $bundle->folders()->firstOrCreate(
             ['parent_id' => $twigFolder->id, 'name' => 'components'],
@@ -396,6 +400,313 @@ PHP;
                 $tags['template-variables'],
             ],
         );
+
+        $this->seedPhpLoopRecipes($bundle, $phpFolder, $user, $tags);
+        $this->seedJavaScriptLoopRecipes($bundle, $javascriptFolder, $user, $tags);
+    }
+
+    /**
+     * @param  array<string, Tag>  $tags
+     */
+    private function seedPhpLoopRecipes(Project $project, Folder $folder, User $user, array $tags): void
+    {
+        $recipes = [
+            [
+                'title' => 'PHP For Loop',
+                'filename' => 'php-for.php',
+                'description' => 'Iterate over an indexed array with a counter and a cached item count.',
+                'variation' => 'Indexed for loop',
+                'content' => <<<'PHP'
+<?php
+
+$count = count($items);
+
+for ($index = 0; $index < $count; $index++) {
+    echo $items[$index].PHP_EOL;
+}
+PHP,
+            ],
+            [
+                'title' => 'PHP While Loop',
+                'filename' => 'php-while.php',
+                'description' => 'Process indexed items while an explicit condition remains true.',
+                'variation' => 'Condition-first while loop',
+                'content' => <<<'PHP'
+<?php
+
+$index = 0;
+$count = count($items);
+
+while ($index < $count) {
+    echo $items[$index].PHP_EOL;
+    $index++;
+}
+PHP,
+            ],
+            [
+                'title' => 'PHP Do While Loop',
+                'filename' => 'php-do-while.php',
+                'description' => 'Run the loop body before checking the condition, while safely handling an empty array.',
+                'variation' => 'Guarded do while loop',
+                'content' => <<<'PHP'
+<?php
+
+$index = 0;
+$count = count($items);
+
+if ($count > 0) {
+    do {
+        echo $items[$index].PHP_EOL;
+        $index++;
+    } while ($index < $count);
+}
+PHP,
+            ],
+        ];
+
+        foreach ($recipes as $position => $recipe) {
+            $this->createSingleVariationSnippet(
+                project: $project,
+                folder: $folder,
+                user: $user,
+                attributes: [
+                    'title' => $recipe['title'],
+                    'filename' => $recipe['filename'],
+                    'language' => 'php',
+                    'description' => $recipe['description'],
+                    'content' => $recipe['content'],
+                    'position' => $position + 1,
+                ],
+                variationName: $recipe['variation'],
+                tags: [
+                    $tags['php'],
+                    $tags['loop'],
+                    $tags['reusable'],
+                ],
+            );
+        }
+    }
+
+    /**
+     * @param  array<string, Tag>  $tags
+     */
+    private function seedJavaScriptLoopRecipes(Project $project, Folder $folder, User $user, array $tags): void
+    {
+        $recipes = [
+            [
+                'title' => 'JavaScript For Loop',
+                'filename' => 'javascript-for.js',
+                'description' => 'Iterate over an array with an index-controlled for loop.',
+                'variation' => 'Indexed for loop',
+                'content' => <<<'JAVASCRIPT'
+for (let index = 0; index < items.length; index += 1) {
+    console.log(items[index]);
+}
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript For Of Loop',
+                'filename' => 'javascript-for-of.js',
+                'description' => 'Iterate over iterable values while retaining each array index.',
+                'variation' => 'For of with entries',
+                'content' => <<<'JAVASCRIPT'
+for (const [index, item] of items.entries()) {
+    console.log(index, item);
+}
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript For In Loop',
+                'filename' => 'javascript-for-in.js',
+                'description' => 'Iterate over an object’s own enumerable properties.',
+                'variation' => 'Own object properties',
+                'content' => <<<'JAVASCRIPT'
+for (const key in settings) {
+    if (Object.hasOwn(settings, key)) {
+        console.log(key, settings[key]);
+    }
+}
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript For Await Of Loop',
+                'filename' => 'javascript-for-await-of.js',
+                'description' => 'Consume values from an asynchronous iterable in sequence.',
+                'variation' => 'Sequential async iteration',
+                'content' => <<<'JAVASCRIPT'
+async function processMessages(messages) {
+    for await (const message of messages) {
+        await handleMessage(message);
+    }
+}
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript While Loop',
+                'filename' => 'javascript-while.js',
+                'description' => 'Repeat work while a condition remains true.',
+                'variation' => 'Condition-first while loop',
+                'content' => <<<'JAVASCRIPT'
+let index = 0;
+
+while (index < items.length) {
+    console.log(items[index]);
+    index += 1;
+}
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript Do While Loop',
+                'filename' => 'javascript-do-while.js',
+                'description' => 'Run the loop body before checking the next condition.',
+                'variation' => 'Guarded do while loop',
+                'content' => <<<'JAVASCRIPT'
+let index = 0;
+
+if (items.length > 0) {
+    do {
+        console.log(items[index]);
+        index += 1;
+    } while (index < items.length);
+}
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript Array For Each',
+                'filename' => 'javascript-foreach.js',
+                'description' => 'Run a side effect once for every array item.',
+                'variation' => 'Array forEach callback',
+                'content' => <<<'JAVASCRIPT'
+items.forEach((item, index) => {
+    console.log(index, item);
+});
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript Array Map',
+                'filename' => 'javascript-map.js',
+                'description' => 'Transform every array item into a new array.',
+                'variation' => 'Map items to labels',
+                'content' => <<<'JAVASCRIPT'
+const labels = items.map((item) => item.name);
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript Array Filter',
+                'filename' => 'javascript-filter.js',
+                'description' => 'Create a new array containing only matching items.',
+                'variation' => 'Filter active items',
+                'content' => <<<'JAVASCRIPT'
+const activeItems = items.filter((item) => item.active);
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript Array Reduce',
+                'filename' => 'javascript-reduce.js',
+                'description' => 'Combine array items into a single accumulated value.',
+                'variation' => 'Reduce items to a total',
+                'content' => <<<'JAVASCRIPT'
+const total = items.reduce((sum, item) => sum + item.price, 0);
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript Array Reduce Right',
+                'filename' => 'javascript-reduce-right.js',
+                'description' => 'Accumulate array values from right to left.',
+                'variation' => 'Build a path from the right',
+                'content' => <<<'JAVASCRIPT'
+const path = segments.reduceRight(
+    (currentPath, segment) => `${segment}/${currentPath}`,
+    '',
+);
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript Array Find',
+                'filename' => 'javascript-find.js',
+                'description' => 'Return the first array item that matches a condition.',
+                'variation' => 'Find an item by ID',
+                'content' => <<<'JAVASCRIPT'
+const selectedItem = items.find((item) => item.id === targetId);
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript Array Find Index',
+                'filename' => 'javascript-find-index.js',
+                'description' => 'Return the index of the first matching array item.',
+                'variation' => 'Find an item index by ID',
+                'content' => <<<'JAVASCRIPT'
+const selectedIndex = items.findIndex((item) => item.id === targetId);
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript Array Find Last',
+                'filename' => 'javascript-find-last.js',
+                'description' => 'Return the last array item that matches a condition.',
+                'variation' => 'Find the last completed item',
+                'content' => <<<'JAVASCRIPT'
+const lastCompletedItem = items.findLast((item) => item.completed);
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript Array Find Last Index',
+                'filename' => 'javascript-find-last-index.js',
+                'description' => 'Return the index of the last matching array item.',
+                'variation' => 'Find the last completed index',
+                'content' => <<<'JAVASCRIPT'
+const lastCompletedIndex = items.findLastIndex((item) => item.completed);
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript Array Some',
+                'filename' => 'javascript-some.js',
+                'description' => 'Check whether at least one array item matches a condition.',
+                'variation' => 'Check for an unavailable item',
+                'content' => <<<'JAVASCRIPT'
+const hasUnavailableItem = items.some((item) => !item.available);
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript Array Every',
+                'filename' => 'javascript-every.js',
+                'description' => 'Check whether every array item matches a condition.',
+                'variation' => 'Check that every item is valid',
+                'content' => <<<'JAVASCRIPT'
+const allItemsAreValid = items.every((item) => item.valid);
+JAVASCRIPT,
+            ],
+            [
+                'title' => 'JavaScript Array Flat Map',
+                'filename' => 'javascript-flat-map.js',
+                'description' => 'Map nested values and flatten the result by one level.',
+                'variation' => 'Flatten category products',
+                'content' => <<<'JAVASCRIPT'
+const products = categories.flatMap((category) => category.products);
+JAVASCRIPT,
+            ],
+        ];
+
+        foreach ($recipes as $position => $recipe) {
+            $this->createSingleVariationSnippet(
+                project: $project,
+                folder: $folder,
+                user: $user,
+                attributes: [
+                    'title' => $recipe['title'],
+                    'filename' => $recipe['filename'],
+                    'language' => 'javascript',
+                    'description' => $recipe['description'],
+                    'content' => $recipe['content'],
+                    'position' => $position,
+                ],
+                variationName: $recipe['variation'],
+                tags: [
+                    $tags['javascript'],
+                    $tags['loop'],
+                    $tags['reusable'],
+                ],
+            );
+        }
     }
 
     /**
@@ -8082,6 +8393,7 @@ MARKDOWN;
     {
         $definitions = [
             'php' => ['name' => 'PHP', 'color' => '#777bb4'],
+            'javascript' => ['name' => 'JavaScript', 'color' => '#f7df1e'],
             'twig' => ['name' => 'Twig', 'color' => '#a5b4fc'],
             'timber' => ['name' => 'Timber', 'color' => '#22c55e'],
             'wordpress' => ['name' => 'WordPress', 'color' => '#21759b'],

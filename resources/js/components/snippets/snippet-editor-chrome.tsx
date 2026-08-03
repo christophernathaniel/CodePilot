@@ -7,6 +7,7 @@ import {
     Code2,
     Copy,
     Eye,
+    Files,
     GitBranch,
     Plus,
     Save,
@@ -36,6 +37,7 @@ export type SnippetEditorToolbarProps = {
     dirty: boolean;
     saving: boolean;
     copied: boolean;
+    multiFileMode: boolean;
     sections?: ParsedSnippetSection[];
     activeSectionKey?: string | null;
     onModeChange: (mode: EditorMode) => void;
@@ -47,6 +49,7 @@ export type SnippetEditorToolbarProps = {
     onCopyRendered: () => void;
     onCopySource: () => void;
     onSelectAll: () => void;
+    onMultiFileModeToggle: () => void;
 };
 
 export function SnippetEditorToolbar({
@@ -59,6 +62,7 @@ export function SnippetEditorToolbar({
     dirty,
     saving,
     copied,
+    multiFileMode,
     sections = [],
     activeSectionKey = null,
     onModeChange,
@@ -70,13 +74,14 @@ export function SnippetEditorToolbar({
     onCopyRendered,
     onCopySource,
     onSelectAll,
+    onMultiFileModeToggle,
 }: SnippetEditorToolbarProps) {
     const activeSection =
         sections.find((section) => section.key === activeSectionKey) ?? null;
 
     return (
         <>
-            <div className="flex h-8 shrink-0 items-center gap-1 border-b border-code-border bg-code-canvas px-3 text-[10px] text-code-faint">
+            <div className="flex h-8 shrink-0 items-center gap-1 bg-code-canvas px-3 text-[10px] text-code-faint">
                 <span className="truncate">
                     {project?.name ?? 'Standalone'}
                 </span>
@@ -95,10 +100,35 @@ export function SnippetEditorToolbar({
                 <span className="truncate text-code-muted">
                     {snippet.filename}
                 </span>
+                <button
+                    type="button"
+                    aria-label={
+                        multiFileMode
+                            ? 'Turn off multi-file mode'
+                            : 'Turn on multi-file mode'
+                    }
+                    aria-pressed={multiFileMode}
+                    title={
+                        multiFileMode
+                            ? 'Turn off multi-file mode'
+                            : 'Turn on multi-file mode'
+                    }
+                    onClick={onMultiFileModeToggle}
+                    className={cn(
+                        'ml-auto flex size-6 shrink-0 items-center justify-center rounded transition hover:bg-code-hover hover:text-code-text',
+                        multiFileMode ? 'text-sky-300' : 'text-code-faint',
+                    )}
+                >
+                    <Files className="size-3.5" />
+                </button>
             </div>
 
-            <div className="flex h-11 shrink-0 items-center gap-2 border-b border-code-border bg-code-panel px-3">
-                <div className="flex h-7 items-center rounded-md border border-code-border bg-code-canvas p-0.5">
+            <div className="flex h-11 shrink-0 items-center gap-2 bg-code-panel px-3">
+                <div
+                    role="group"
+                    aria-label="Editor view"
+                    className="flex h-7 items-center rounded-md bg-code-canvas p-0.5"
+                >
                     <ModeButton
                         active={mode === 'source'}
                         label="Source"
@@ -125,7 +155,7 @@ export function SnippetEditorToolbar({
                     <DropdownMenuTrigger asChild>
                         <button
                             type="button"
-                            className="flex h-7 max-w-52 min-w-0 items-center gap-1.5 rounded-md border border-code-border bg-code-canvas px-2 text-[10px] text-code-muted transition hover:bg-code-hover hover:text-code-text"
+                            className="flex h-7 max-w-52 min-w-0 items-center gap-1.5 rounded-md bg-code-canvas px-2 text-[10px] text-code-muted transition hover:bg-code-hover hover:text-code-text"
                             aria-label={`Active variation: ${activeVariation.name}`}
                         >
                             <GitBranch className="size-3 shrink-0" />
@@ -176,7 +206,7 @@ export function SnippetEditorToolbar({
                         <DropdownMenuTrigger asChild>
                             <button
                                 type="button"
-                                className="flex h-7 max-w-52 min-w-0 items-center gap-1.5 rounded-md border border-code-border bg-code-canvas px-2 text-[10px] text-code-muted transition hover:bg-code-hover hover:text-code-text"
+                                className="flex h-7 max-w-52 min-w-0 items-center gap-1.5 rounded-md bg-code-canvas px-2 text-[10px] text-code-muted transition hover:bg-code-hover hover:text-code-text"
                                 aria-label={
                                     activeSection
                                         ? `Active embedded snippet: ${activeSection.label}`
@@ -243,7 +273,7 @@ export function SnippetEditorToolbar({
                             activeSection.content.length === 0 ||
                             !onCopySection
                         }
-                        className="flex h-7 shrink-0 items-center gap-1.5 rounded border border-sky-400/20 bg-sky-400/5 px-2 text-[10px] text-sky-200 transition hover:border-sky-300/30 hover:bg-sky-400/10 disabled:cursor-not-allowed disabled:border-code-border disabled:bg-transparent disabled:text-code-faint"
+                        className="flex h-7 shrink-0 items-center gap-1.5 rounded bg-sky-400/5 px-2 text-[10px] text-sky-200 transition hover:bg-sky-400/10 disabled:cursor-not-allowed disabled:bg-transparent disabled:text-code-faint"
                     >
                         <Braces className="size-3" />
                         Copy section
@@ -254,7 +284,7 @@ export function SnippetEditorToolbar({
                     <DropdownMenuTrigger asChild>
                         <button
                             type="button"
-                            className="flex h-7 items-center gap-1.5 rounded border border-code-border px-2 text-[10px] text-code-muted transition hover:bg-code-hover hover:text-code-text"
+                            className="flex h-7 items-center gap-1.5 rounded bg-code-raised px-2 text-[10px] text-code-muted transition hover:bg-code-hover hover:text-code-text"
                         >
                             {copied ? (
                                 <Check className="size-3 text-code-success" />
@@ -308,7 +338,7 @@ export function SnippetEditorStatus({
     variableCount,
 }: SnippetEditorStatusProps) {
     return (
-        <footer className="flex h-6 shrink-0 items-center gap-4 border-t border-code-border bg-code-panel px-3 font-mono text-[9px] text-code-faint">
+        <footer className="flex h-6 shrink-0 items-center gap-4 bg-code-panel px-3 font-mono text-[9px] text-code-faint">
             <span className="flex items-center gap-1.5">
                 <span
                     className={cn(
@@ -366,6 +396,7 @@ function ModeButton({
     return (
         <button
             type="button"
+            aria-pressed={active}
             onClick={onClick}
             className={cn(
                 'flex h-6 items-center gap-1.5 rounded px-2 text-[9px] font-medium transition',

@@ -9,12 +9,13 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
-#[Fillable(['user_id', 'kind', 'name', 'description', 'position'])]
+#[Fillable(['user_id', 'library_category_id', 'kind', 'name', 'description', 'position'])]
 class Project extends Model
 {
     /** @use HasFactory<ProjectFactory> */
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     public const KIND_BUNDLE = 'bundle';
 
@@ -38,6 +39,12 @@ class Project extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /** @return BelongsTo<LibraryCategory, $this> */
+    public function libraryCategory(): BelongsTo
+    {
+        return $this->belongsTo(LibraryCategory::class);
     }
 
     /** @return HasMany<Folder, $this> */

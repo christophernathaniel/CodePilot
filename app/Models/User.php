@@ -41,10 +41,22 @@ class User extends Authenticatable implements PasskeyUser
         return $this->hasMany(Project::class);
     }
 
+    /** @return HasMany<LibraryCategory, $this> */
+    public function libraryCategories(): HasMany
+    {
+        return $this->hasMany(LibraryCategory::class);
+    }
+
     /** @return HasMany<Snippet, $this> */
     public function snippets(): HasMany
     {
         return $this->hasMany(Snippet::class);
+    }
+
+    /** @return HasMany<ClipboardSession, $this> */
+    public function clipboardSessions(): HasMany
+    {
+        return $this->hasMany(ClipboardSession::class);
     }
 
     /** @return HasMany<Tag, $this> */

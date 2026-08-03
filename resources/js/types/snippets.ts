@@ -10,8 +10,15 @@ export type ProjectKind = 'project' | 'bundle' | 'guide';
 
 export type SnippetContentType = 'snippet' | 'guide';
 
+export type LibraryCategory = {
+    id: number;
+    name: string;
+    position: number;
+};
+
 export type Project = {
     id: number;
+    library_category_id: number | null;
     name: string;
     kind: ProjectKind;
     description: string | null;
@@ -137,7 +144,53 @@ export type WorkspacePins = {
     framework_ids: number[];
 };
 
+export type LibraryTrashItem = {
+    type: 'project' | 'folder' | 'snippet';
+    id: number;
+    name: string;
+    context: string;
+    deleted_at: string;
+};
+
+export type LibraryTrash = {
+    projects: LibraryTrashItem[];
+    folders: LibraryTrashItem[];
+    snippets: LibraryTrashItem[];
+};
+
+export type ClipboardClipSource = {
+    snippet_id: number | null;
+    variation_id: number | null;
+    title: string;
+    filename: string;
+    project: string | null;
+    folders: string[];
+    variation: string;
+    line_start: number;
+    line_end: number;
+};
+
+export type ClipboardClip = {
+    id: number;
+    content: string;
+    language: string;
+    representation: 'source' | 'rendered';
+    source: ClipboardClipSource;
+    created_at: string;
+};
+
+export type ClipboardSession = {
+    id: number;
+    name: string;
+    is_active: boolean;
+    clips_count: number;
+    clips: ClipboardClip[];
+    created_at: string;
+    updated_at: string;
+};
+
 export type SnippetWorkspaceProps = {
+    library_categories: LibraryCategory[];
     projects: Project[];
     standalone_snippets: Snippet[];
     language_options: LanguageOption[];
@@ -145,6 +198,8 @@ export type SnippetWorkspaceProps = {
     tags: Tag[];
     frameworks: Framework[];
     pins: WorkspacePins;
+    trash: LibraryTrash;
+    clipboard_sessions: ClipboardSession[];
 };
 
 export type SnippetProject = Project;

@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 #[Fillable([
     'user_id',
@@ -27,7 +28,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Snippet extends Model
 {
     /** @use HasFactory<SnippetFactory> */
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     public const CONTENT_TYPE_GUIDE = 'guide';
 

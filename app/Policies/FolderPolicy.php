@@ -60,12 +60,13 @@ class FolderPolicy
      */
     public function forceDelete(User $user, Folder $folder): bool
     {
-        return false;
+        return $this->belongsToUser($folder, $user);
     }
 
     private function belongsToUser(Folder $folder, User $user): bool
     {
         return $folder->project()
+            ->withTrashed()
             ->where('user_id', $user->id)
             ->exists();
     }

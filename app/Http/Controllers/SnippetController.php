@@ -2,6 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Actions\Library\MoveItemToTrash;
+use App\Actions\Library\PermanentlyDeleteItem;
+use App\Actions\Library\RestoreItemFromTrash;
 use App\Actions\Snippets\CreateSnippet;
 use App\Actions\Snippets\SyncSnippetFrameworks;
 use App\Actions\Snippets\SyncSnippetTags;
@@ -80,13 +83,37 @@ class SnippetController extends Controller
         return back();
     }
 
-    public function destroy(Snippet $snippet): RedirectResponse
+    public function destroy(Snippet $snippet, MoveItemToTrash $moveItemToTrash): RedirectResponse
     {
         Gate::authorize('delete', $snippet);
 
-        $snippet->delete();
+        $moveItemToTrash->handle($snippet);
 
-        Inertia::flash('toast', ['type' => 'success', 'message' => __('Snippet deleted.')]);
+        Inertia::flash('toast', ['type' => 'success', 'message' => __('Snippet moved to Trash.')]);
+
+        return back();
+    }
+
+    public function restore(Snippet $snippet, RestoreItemFromTrash $restoreItemFromTrash): RedirectResponse
+    {
+        abort_unless($snippet->trashed(), 404);
+        Gate::authorize('restore', $snippet);
+
+        $restoreItemFromTrash->handle($snippet);
+
+        Inertia::flash('toast', ['type' => 'success', 'message' => __('Snippet restored.')]);
+
+        return back();
+    }
+
+    public function forceDestroy(Snippet $snippet, PermanentlyDeleteItem $permanentlyDeleteItem): RedirectResponse
+    {
+        abort_unless($snippet->trashed(), 404);
+        Gate::authorize('forceDelete', $snippet);
+
+        $permanentlyDeleteItem->handle($snippet);
+
+        Inertia::flash('toast', ['type' => 'success', 'message' => __('Snippet permanently deleted.')]);
 
         return back();
     }

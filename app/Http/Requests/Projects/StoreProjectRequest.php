@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Projects;
 
+use App\Models\LibraryCategory;
 use App\Models\Project;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Str;
@@ -27,6 +28,11 @@ class StoreProjectRequest extends FormRequest
                 'string',
                 'max:255',
                 Rule::unique(Project::class)->where('user_id', $this->user()->id),
+            ],
+            'library_category_id' => [
+                'nullable',
+                'integer',
+                Rule::exists(LibraryCategory::class, 'id')->where('user_id', $this->user()->id),
             ],
             'kind' => ['required', Rule::in(Project::KINDS)],
             'description' => ['nullable', 'string', 'max:5000'],

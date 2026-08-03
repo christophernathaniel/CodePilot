@@ -1,15 +1,22 @@
 import {
+    BookOpenText,
     Braces,
     Copy,
     CornerDownLeft,
+    Eye,
     FolderOpen,
     Package,
     Search,
-    Sparkles,
+    X,
 } from 'lucide-react';
-import { useId, useMemo, useState } from 'react';
-import type { KeyboardEvent, RefObject } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent, ReactNode, RefObject } from 'react';
 import { SnippetFileIcon } from '@/components/snippets/snippet-file-icon';
+import {
+    getInlineSearchSuggestion,
+    getSearchSuggestionCaretPosition,
+} from '@/lib/snippets/search-query';
+import type { SnippetCodeExcerpt } from '@/lib/snippets/search-query';
 import type { ParsedSnippetSection } from '@/lib/snippets/snippet-sections';
 import { cn } from '@/lib/utils';
 import type {
@@ -46,6 +53,7 @@ export type SnippetSearchResult =
           path: string;
           variationId: number | null;
           variationName: string | null;
+          excerpt: SnippetCodeExcerpt | null;
       }
     | SnippetSectionSearchResult;
 
@@ -53,61 +61,193 @@ type Props = {
     query: string;
     suggestions: string[];
     results: SnippetSearchResult[];
+    totalResults?: number;
     inputRef?: RefObject<HTMLInputElement | null>;
     variant?: 'panel' | 'hero';
+    behavior?: 'filter' | 'command';
+    resultsMode?: 'popover' | 'workspace';
+    placeholder?: string;
+    resultsLabel?: string;
+    shortcutKey?: string;
+    shortcutAriaLabel?: string;
+    searchHelp?: string;
+    onFocus?: () => void;
+    deferEscapeToParent?: boolean;
+    showResultsWithoutQuery?: boolean;
     onQueryChange: (query: string) => void;
-    onSuggestionAccept: (suggestion: string) => void;
-    onOpen: (result: SnippetSearchResult) => void;
+    onCaretChange?: (caretPosition: number) => void;
+    onSuggestionAccept: (suggestion: string, caretPosition?: number) => void;
+    onOpen: (result: SnippetSearchResult) => boolean | void;
     onCopySection?: (result: SnippetSectionSearchResult) => void;
+    renderPreview?: (result: SnippetSearchResult | null) => ReactNode;
+    inputActions?: ReactNode;
+    controls?: ReactNode;
 };
 
 export function SnippetSearch({
     query,
     suggestions,
     results,
+    totalResults = results.length,
     inputRef,
     variant = 'panel',
+    behavior = 'command',
+    resultsMode = 'popover',
+    placeholder,
+    resultsLabel = 'Projects, folders, files & sections',
+    shortcutKey = 'K',
+    shortcutAriaLabel = 'Meta+K Control+K',
+    searchHelp,
+    onFocus,
+    deferEscapeToParent = false,
+    showResultsWithoutQuery = false,
     onQueryChange,
+    onCaretChange,
     onSuggestionAccept,
     onOpen,
     onCopySection,
+    renderPreview,
+    inputActions,
+    controls,
 }: Props) {
     const isHero = variant === 'hero';
+    const isCommand = behavior === 'command';
+    const isWorkspaceResults = resultsMode === 'workspace';
     const listboxId = useId();
-    const [activeIndex, setActiveIndex] = useState(0);
+    const completionDescriptionId = useId();
+    const searchHelpId = useId();
+    const fallbackInputRef = useRef<HTMLInputElement>(null);
+    const activeOptionRef = useRef<HTMLButtonElement>(null);
+    const searchInputRef = inputRef ?? fallbackInputRef;
+    const resultsKey = results.map(getSearchResultKey).join('|');
+    const [activeIndexState, setActiveIndexState] = useState({
+        resultsKey,
+        index: 0,
+    });
+    const activeIndex =
+        activeIndexState.resultsKey === resultsKey ? activeIndexState.index : 0;
+    const setActiveIndex = (
+        nextIndex: number | ((currentIndex: number) => number),
+    ) => {
+        setActiveIndexState((current) => {
+            const currentIndex =
+                current.resultsKey === resultsKey ? current.index : 0;
+
+            return {
+                resultsKey,
+                index:
+                    typeof nextIndex === 'function'
+                        ? nextIndex(currentIndex)
+                        : nextIndex,
+            };
+        });
+    };
     const [isOpen, setIsOpen] = useState(false);
-    const visibleSuggestions = useMemo(
-        () => suggestions.slice(0, isHero ? 5 : 3),
-        [isHero, suggestions],
+    const [inputScrollLeft, setInputScrollLeft] = useState(0);
+    const [caretPosition, setCaretPosition] = useState(query.length);
+    const completionSuggestion = useMemo(
+        () =>
+            isCommand
+                ? getInlineSearchSuggestion(
+                      query,
+                      suggestions[0],
+                      caretPosition,
+                  )
+                : null,
+        [caretPosition, isCommand, query, suggestions],
     );
-    const hasQuery = query.trim().length > 0;
-    const optionCount = visibleSuggestions.length + results.length;
-    const showOptions = isOpen && hasQuery;
+    const inlineSuggestion =
+        caretPosition === query.length ? completionSuggestion : null;
+    const hasInput = query.length > 0;
+    const optionCount = isCommand ? results.length : 0;
+    const showOptions =
+        isCommand &&
+        (showResultsWithoutQuery || (isOpen && query.trim().length > 0));
     const navigableIndex = Math.min(activeIndex, Math.max(optionCount - 1, 0));
+    const activeResult = showOptions ? (results[navigableIndex] ?? null) : null;
+    const activeOptionId =
+        showOptions && optionCount > 0
+            ? `${listboxId}-option-${navigableIndex}`
+            : undefined;
+
+    useEffect(() => {
+        if (!showOptions || !isWorkspaceResults) {
+            return;
+        }
+
+        activeOptionRef.current?.scrollIntoView({ block: 'nearest' });
+    }, [isWorkspaceResults, navigableIndex, showOptions]);
+
+    const syncCaretPosition = (
+        input: HTMLInputElement,
+        restoreSelection = false,
+    ) => {
+        const nextCaretPosition = input.selectionStart ?? input.value.length;
+        const nextSelectionEnd = input.selectionEnd ?? nextCaretPosition;
+
+        setCaretPosition(nextCaretPosition);
+        onCaretChange?.(nextCaretPosition);
+
+        if (restoreSelection) {
+            window.requestAnimationFrame(() => {
+                searchInputRef.current?.setSelectionRange(
+                    nextCaretPosition,
+                    nextSelectionEnd,
+                );
+            });
+        }
+    };
 
     const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
         if (event.key === 'Escape') {
+            if (deferEscapeToParent) {
+                return;
+            }
+
             event.preventDefault();
             setIsOpen(false);
 
             return;
         }
 
-        if (event.key === 'Tab' && visibleSuggestions[0]) {
+        if (
+            event.key === 'Tab' &&
+            !event.shiftKey &&
+            !event.altKey &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            completionSuggestion &&
+            suggestions[0]
+        ) {
             event.preventDefault();
-            onSuggestionAccept(visibleSuggestions[0]);
+            setActiveIndex(0);
+            const nextCaretPosition = getSearchSuggestionCaretPosition(
+                query,
+                suggestions[0],
+                caretPosition,
+            );
+
+            setCaretPosition(nextCaretPosition);
+            onCaretChange?.(nextCaretPosition);
+            onSuggestionAccept(suggestions[0], caretPosition);
+            window.requestAnimationFrame(() => {
+                searchInputRef.current?.setSelectionRange(
+                    nextCaretPosition,
+                    nextCaretPosition,
+                );
+            });
 
             return;
         }
 
-        if (event.key === 'ArrowDown' && optionCount > 0) {
+        if (event.key === 'ArrowDown' && showOptions && optionCount > 0) {
             event.preventDefault();
             setActiveIndex((current) => (current + 1) % optionCount);
 
             return;
         }
 
-        if (event.key === 'ArrowUp' && optionCount > 0) {
+        if (event.key === 'ArrowUp' && showOptions && optionCount > 0) {
             event.preventDefault();
             setActiveIndex(
                 (current) => (current - 1 + optionCount) % optionCount,
@@ -116,29 +256,30 @@ export function SnippetSearch({
             return;
         }
 
-        if (event.key !== 'Enter' || optionCount === 0) {
+        if (event.key !== 'Enter' || !showOptions || optionCount === 0) {
             return;
         }
 
         event.preventDefault();
 
-        if (navigableIndex < visibleSuggestions.length) {
-            onSuggestionAccept(visibleSuggestions[navigableIndex]);
-
-            return;
-        }
-
-        const result = results[navigableIndex - visibleSuggestions.length];
+        const result = results[navigableIndex];
 
         if (result) {
-            setIsOpen(false);
-            onOpen(result);
+            const didOpen = onOpen(result);
+
+            if (didOpen !== false) {
+                setIsOpen(false);
+            }
         }
     };
 
     return (
         <div
-            className={cn('relative w-full', isHero && 'max-w-3xl')}
+            className={cn(
+                'relative w-full',
+                isHero && !isWorkspaceResults && 'max-w-3xl',
+                isWorkspaceResults && 'flex min-h-0 flex-1 flex-col',
+            )}
             onBlur={(event) => {
                 if (
                     !event.currentTarget.contains(
@@ -151,10 +292,12 @@ export function SnippetSearch({
         >
             <div
                 className={cn(
-                    'group flex items-center border border-code-border bg-code-raised shadow-[0_18px_60px_rgba(0,0,0,0.35)] transition focus-within:border-code-accent/70 focus-within:ring-1 focus-within:ring-code-accent/15',
+                    'group flex items-center bg-code-raised shadow-[0_18px_60px_rgba(0,0,0,0.35)] transition focus-within:ring-1 focus-within:ring-code-accent/50',
                     isHero
                         ? 'h-16 rounded-2xl px-5'
                         : 'h-9 rounded-md px-2.5 shadow-none',
+                    isWorkspaceResults &&
+                        'mx-auto w-full max-w-4xl shrink-0 shadow-[0_12px_38px_rgba(0,0,0,0.28)]',
                 )}
             >
                 <Search
@@ -165,32 +308,151 @@ export function SnippetSearch({
                     )}
                     strokeWidth={1.8}
                 />
-                <input
-                    ref={inputRef}
-                    value={query}
-                    onFocus={() => setIsOpen(true)}
-                    onChange={(event) => {
-                        setActiveIndex(0);
-                        setIsOpen(true);
-                        onQueryChange(event.target.value);
-                    }}
-                    onKeyDown={handleKeyDown}
-                    aria-label="Search code snippets"
-                    aria-expanded={showOptions}
-                    aria-controls={listboxId}
-                    placeholder={
-                        isHero
-                            ? 'Find code, language==javascript, !deprecated…'
-                            : 'Search snippets…'
-                    }
-                    className={cn(
-                        'min-w-0 flex-1 bg-transparent text-code-text outline-none placeholder:text-code-faint',
-                        isHero ? 'px-4 font-mono text-[15px]' : 'px-2 text-xs',
+                <div className="relative min-w-0 flex-1 self-stretch overflow-hidden">
+                    {inlineSuggestion && (
+                        <div
+                            aria-hidden="true"
+                            className={cn(
+                                'pointer-events-none absolute inset-0 flex items-center overflow-hidden whitespace-pre',
+                                isHero
+                                    ? 'px-4 font-mono text-[15px]'
+                                    : 'px-2 text-xs',
+                            )}
+                        >
+                            <span
+                                className="flex min-w-max"
+                                style={{
+                                    transform: `translateX(-${inputScrollLeft}px)`,
+                                }}
+                            >
+                                <span className="text-transparent">
+                                    {query}
+                                </span>
+                                <span className="text-code-faint/65">
+                                    {inlineSuggestion.suffix}
+                                </span>
+                            </span>
+                        </div>
                     )}
-                />
-                {isHero ? (
-                    <kbd className="hidden items-center gap-1 rounded-md border border-code-border bg-code-hover px-2 py-1 font-sans text-[10px] text-code-faint sm:flex">
-                        <span>⌘</span>K
+                    <input
+                        ref={searchInputRef}
+                        value={query}
+                        onFocus={(event) => {
+                            onFocus?.();
+                            syncCaretPosition(event.currentTarget);
+
+                            if (isCommand) {
+                                setIsOpen(true);
+                            }
+                        }}
+                        onChange={(event) => {
+                            setActiveIndex(0);
+                            setInputScrollLeft(event.currentTarget.scrollLeft);
+                            syncCaretPosition(event.currentTarget);
+
+                            if (isCommand) {
+                                setIsOpen(true);
+                            }
+
+                            onQueryChange(event.target.value);
+                        }}
+                        onMouseUp={(event) =>
+                            syncCaretPosition(event.currentTarget, true)
+                        }
+                        onKeyUp={(event) => {
+                            if (
+                                [
+                                    'ArrowLeft',
+                                    'ArrowRight',
+                                    'Home',
+                                    'End',
+                                ].includes(event.key)
+                            ) {
+                                syncCaretPosition(event.currentTarget, true);
+                            }
+                        }}
+                        onScroll={(event) =>
+                            setInputScrollLeft(event.currentTarget.scrollLeft)
+                        }
+                        onKeyDown={handleKeyDown}
+                        role="combobox"
+                        aria-label="Search code snippets"
+                        aria-autocomplete={
+                            completionSuggestion ? 'both' : 'list'
+                        }
+                        aria-describedby={
+                            [
+                                searchHelp ? searchHelpId : null,
+                                completionSuggestion
+                                    ? completionDescriptionId
+                                    : null,
+                            ]
+                                .filter(Boolean)
+                                .join(' ') || undefined
+                        }
+                        aria-keyshortcuts={shortcutAriaLabel}
+                        aria-expanded={showOptions}
+                        aria-haspopup="listbox"
+                        aria-controls={showOptions ? listboxId : undefined}
+                        aria-activedescendant={activeOptionId}
+                        placeholder={
+                            placeholder ??
+                            (isHero
+                                ? 'Find code, language==javascript, !deprecated…'
+                                : 'Search snippets…')
+                        }
+                        className={cn(
+                            'relative z-10 h-full w-full min-w-0 bg-transparent text-code-text outline-none placeholder:text-code-faint',
+                            isHero
+                                ? 'px-4 font-mono text-[15px]'
+                                : 'px-2 text-xs',
+                        )}
+                    />
+                    {completionSuggestion && (
+                        <span
+                            id={completionDescriptionId}
+                            role="status"
+                            aria-live="polite"
+                            className="sr-only"
+                        >
+                            Suggested completion:{' '}
+                            {completionSuggestion.completion}. Press Tab to
+                            accept.
+                        </span>
+                    )}
+                    {searchHelp && (
+                        <span id={searchHelpId} className="sr-only">
+                            {searchHelp}
+                        </span>
+                    )}
+                </div>
+                {inputActions}
+                {hasInput ? (
+                    <button
+                        type="button"
+                        aria-label="Clear search"
+                        title="Clear search"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                            setActiveIndex(0);
+                            setInputScrollLeft(0);
+                            setIsOpen(showResultsWithoutQuery);
+                            setCaretPosition(0);
+                            onCaretChange?.(0);
+                            onQueryChange('');
+                            searchInputRef.current?.focus();
+                        }}
+                        className={cn(
+                            'flex shrink-0 items-center justify-center rounded text-code-faint transition hover:bg-code-hover hover:text-code-text focus-visible:outline-1 focus-visible:outline-code-accent',
+                            isHero ? 'size-8' : 'size-6',
+                        )}
+                    >
+                        <X className={isHero ? 'size-4' : 'size-3.5'} />
+                    </button>
+                ) : isHero ? (
+                    <kbd className="hidden items-center gap-1 rounded-md bg-code-hover px-2 py-1 font-sans text-[10px] text-code-faint sm:flex">
+                        <span>⌘</span>
+                        {shortcutKey}
                     </kbd>
                 ) : (
                     <span className="font-mono text-[9px] text-code-faint">
@@ -199,134 +461,220 @@ export function SnippetSearch({
                 )}
             </div>
 
-            {showOptions && (
-                <div
-                    id={listboxId}
-                    role="dialog"
-                    aria-label="Search suggestions and results"
-                    className={cn(
-                        'absolute right-0 left-0 z-40 overflow-hidden border border-code-border bg-code-panel/98 shadow-2xl backdrop-blur-xl',
-                        isHero
-                            ? 'top-[calc(100%+0.65rem)] rounded-xl'
-                            : 'top-[calc(100%+0.4rem)] rounded-lg',
-                    )}
-                >
-                    {visibleSuggestions.length > 0 && (
-                        <div className="border-b border-code-border py-1.5">
-                            <div className="flex items-center justify-between px-3 py-1 text-[9px] font-semibold tracking-[0.16em] text-code-faint uppercase">
-                                <span>Complete query</span>
-                                <span>Tab</span>
-                            </div>
-                            {visibleSuggestions.map((suggestion, index) => (
-                                <button
-                                    key={suggestion}
-                                    id={`${listboxId}-option-${index}`}
-                                    type="button"
-                                    aria-current={
-                                        navigableIndex === index
-                                            ? 'true'
-                                            : undefined
-                                    }
-                                    onMouseEnter={() => setActiveIndex(index)}
-                                    onClick={() =>
-                                        onSuggestionAccept(suggestion)
-                                    }
-                                    className={cn(
-                                        'flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-xs',
-                                        navigableIndex === index
-                                            ? 'bg-code-hover text-code-text'
-                                            : 'text-code-muted hover:bg-code-hover',
-                                    )}
-                                >
-                                    <Sparkles className="size-3 text-code-muted" />
-                                    <span className="min-w-0 flex-1 truncate">
-                                        {suggestion}
-                                    </span>
-                                    <span className="text-[9px] text-code-faint">
-                                        complete
-                                    </span>
-                                </button>
-                            ))}
-                        </div>
-                    )}
+            {controls}
 
-                    <div className="max-h-[min(22rem,52vh)] overflow-y-auto py-1.5">
-                        <div className="flex items-center justify-between px-3 py-1 text-[9px] font-semibold tracking-[0.16em] text-code-faint uppercase">
-                            <span>Projects, folders, files &amp; sections</span>
-                            <span>{results.length}</span>
-                        </div>
-                        {results.length === 0 ? (
-                            <div className="px-3 py-5 text-center text-xs text-code-muted">
-                                No workspace item matches this query.
-                            </div>
-                        ) : (
-                            results.map((result, resultIndex) => {
-                                const optionIndex =
-                                    visibleSuggestions.length + resultIndex;
-
-                                return (
-                                    <div
-                                        key={getSearchResultKey(result)}
-                                        className={cn(
-                                            'group flex items-stretch',
-                                            navigableIndex === optionIndex
-                                                ? 'bg-code-hover'
-                                                : 'hover:bg-code-hover',
-                                        )}
-                                        onMouseEnter={() =>
-                                            setActiveIndex(optionIndex)
-                                        }
-                                    >
-                                        <button
-                                            id={`${listboxId}-option-${optionIndex}`}
-                                            type="button"
-                                            aria-current={
-                                                navigableIndex === optionIndex
-                                                    ? 'true'
-                                                    : undefined
-                                            }
-                                            onClick={() => {
-                                                setIsOpen(false);
-                                                onOpen(result);
-                                            }}
-                                            className="flex min-w-0 flex-1 items-start gap-2.5 px-3 py-2.5 text-left"
-                                        >
-                                            <SearchResultContent
-                                                result={result}
-                                            />
-                                            <CornerDownLeft className="mt-0.5 size-3 shrink-0 text-code-faint" />
-                                        </button>
-                                        {result.kind === 'section' &&
-                                            onCopySection && (
-                                                <button
-                                                    type="button"
-                                                    aria-label={`Copy ${result.section.label}`}
-                                                    title="Copy embedded snippet"
-                                                    disabled={
-                                                        result.section.content
-                                                            .length === 0
-                                                    }
-                                                    onClick={() => {
-                                                        setIsOpen(false);
-                                                        onCopySection(result);
-                                                    }}
-                                                    className="flex w-9 shrink-0 items-center justify-center border-l border-code-border/70 text-code-faint transition hover:bg-code-raised hover:text-code-accent disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-code-faint"
-                                                >
-                                                    <Copy className="size-3.5" />
-                                                </button>
-                                            )}
-                                    </div>
-                                );
-                            })
+            {showOptions &&
+                (isWorkspaceResults ? (
+                    <div
+                        className={cn(
+                            'grid min-h-0 flex-1 grid-rows-[minmax(9rem,30vh)_minmax(12rem,1fr)] gap-4 overflow-y-auto min-[32rem]:grid-cols-[minmax(14rem,18rem)_minmax(0,1fr)] min-[32rem]:grid-rows-1 min-[32rem]:overflow-hidden lg:grid-cols-[minmax(17rem,22rem)_minmax(0,1fr)]',
+                            controls ? 'mt-2' : 'mt-4',
                         )}
-                    </div>
-
-                    {isHero && (
-                        <div className="flex items-center gap-4 border-t border-code-border px-3 py-2 text-[9px] text-code-faint">
-                            <span>↑↓ Navigate</span>
-                            <span>↵ Open</span>
-                            <span>Tab Complete</span>
+                    >
+                        <SearchResultsPanel
+                            listboxId={listboxId}
+                            results={results}
+                            totalResults={totalResults}
+                            resultsLabel={resultsLabel}
+                            navigableIndex={navigableIndex}
+                            activeOptionRef={activeOptionRef}
+                            inlineSuggestionAvailable={
+                                completionSuggestion !== null
+                            }
+                            variant={variant}
+                            mode="workspace"
+                            onActiveIndexChange={setActiveIndex}
+                            onOpen={onOpen}
+                            onOpenStateChange={setIsOpen}
+                            onCopySection={onCopySection}
+                        />
+                        <div className="min-h-0 overflow-hidden rounded-xl border border-code-border bg-code-panel/75 shadow-2xl">
+                            {renderPreview?.(activeResult)}
                         </div>
+                    </div>
+                ) : (
+                    <SearchResultsPanel
+                        listboxId={listboxId}
+                        results={results}
+                        totalResults={totalResults}
+                        resultsLabel={resultsLabel}
+                        navigableIndex={navigableIndex}
+                        activeOptionRef={activeOptionRef}
+                        inlineSuggestionAvailable={
+                            completionSuggestion !== null
+                        }
+                        variant={variant}
+                        mode="popover"
+                        onActiveIndexChange={setActiveIndex}
+                        onOpen={onOpen}
+                        onOpenStateChange={setIsOpen}
+                        onCopySection={onCopySection}
+                    />
+                ))}
+        </div>
+    );
+}
+
+type SearchResultsPanelProps = {
+    listboxId: string;
+    results: SnippetSearchResult[];
+    totalResults: number;
+    resultsLabel: string;
+    navigableIndex: number;
+    activeOptionRef: RefObject<HTMLButtonElement | null>;
+    inlineSuggestionAvailable: boolean;
+    variant: 'panel' | 'hero';
+    mode: 'popover' | 'workspace';
+    onActiveIndexChange: (index: number) => void;
+    onOpen: (result: SnippetSearchResult) => boolean | void;
+    onOpenStateChange: (open: boolean) => void;
+    onCopySection?: (result: SnippetSectionSearchResult) => void;
+};
+
+function SearchResultsPanel({
+    listboxId,
+    results,
+    totalResults,
+    resultsLabel,
+    navigableIndex,
+    activeOptionRef,
+    inlineSuggestionAvailable,
+    variant,
+    mode,
+    onActiveIndexChange,
+    onOpen,
+    onOpenStateChange,
+    onCopySection,
+}: SearchResultsPanelProps) {
+    const isWorkspace = mode === 'workspace';
+
+    const openResult = (result: SnippetSearchResult) => {
+        const didOpen = onOpen(result);
+
+        if (didOpen !== false) {
+            onOpenStateChange(false);
+        }
+    };
+
+    return (
+        <div
+            id={listboxId}
+            role="listbox"
+            aria-label="Search results"
+            className={cn(
+                'z-40 flex min-h-0 flex-col overflow-hidden border border-code-border bg-code-panel/98 shadow-2xl backdrop-blur-xl',
+                isWorkspace ? 'relative rounded-xl' : 'absolute right-0 left-0',
+                !isWorkspace &&
+                    (variant === 'hero'
+                        ? 'top-[calc(100%+0.65rem)] rounded-xl'
+                        : 'top-[calc(100%+0.4rem)] rounded-lg'),
+            )}
+        >
+            <div
+                className={cn(
+                    'overflow-y-auto py-1.5',
+                    isWorkspace ? 'min-h-0 flex-1' : 'max-h-[min(22rem,52vh)]',
+                )}
+            >
+                <div className="flex items-center justify-between px-3 py-1 text-[9px] font-semibold tracking-[0.16em] text-code-faint uppercase">
+                    <span>{resultsLabel}</span>
+                    <span>
+                        {results.length < totalResults
+                            ? `${results.length} of ${totalResults}`
+                            : results.length}
+                    </span>
+                </div>
+                {results.length === 0 ? (
+                    <div className="px-3 py-5 text-center text-xs text-code-muted">
+                        No workspace item matches the current query and filters.
+                    </div>
+                ) : (
+                    results.map((result, resultIndex) => {
+                        const isActive = navigableIndex === resultIndex;
+
+                        return (
+                            <div
+                                key={getSearchResultKey(result)}
+                                className={cn(
+                                    'group flex items-stretch',
+                                    isActive
+                                        ? 'bg-code-hover'
+                                        : 'hover:bg-code-hover',
+                                )}
+                                onMouseEnter={() =>
+                                    onActiveIndexChange(resultIndex)
+                                }
+                            >
+                                <button
+                                    ref={isActive ? activeOptionRef : undefined}
+                                    id={`${listboxId}-option-${resultIndex}`}
+                                    type="button"
+                                    tabIndex={-1}
+                                    role="option"
+                                    aria-selected={isActive}
+                                    onFocus={() =>
+                                        onActiveIndexChange(resultIndex)
+                                    }
+                                    onMouseDown={(event) => {
+                                        if (isWorkspace) {
+                                            event.preventDefault();
+                                        }
+                                    }}
+                                    onClick={() => {
+                                        if (isWorkspace) {
+                                            onActiveIndexChange(resultIndex);
+
+                                            return;
+                                        }
+
+                                        openResult(result);
+                                    }}
+                                    onDoubleClick={() => {
+                                        if (isWorkspace) {
+                                            openResult(result);
+                                        }
+                                    }}
+                                    className="flex min-w-0 flex-1 items-start gap-2.5 px-3 py-2.5 text-left"
+                                >
+                                    <SearchResultContent result={result} />
+                                    {isWorkspace ? (
+                                        <Eye className="mt-0.5 size-3 shrink-0 text-code-faint" />
+                                    ) : (
+                                        <CornerDownLeft className="mt-0.5 size-3 shrink-0 text-code-faint" />
+                                    )}
+                                </button>
+                                {result.kind === 'section' && onCopySection && (
+                                    <button
+                                        type="button"
+                                        aria-label={`Copy ${result.section.label}`}
+                                        title="Copy embedded snippet"
+                                        disabled={
+                                            result.section.content.length === 0
+                                        }
+                                        onClick={() => {
+                                            onOpenStateChange(false);
+                                            onCopySection(result);
+                                        }}
+                                        className="flex w-9 shrink-0 items-center justify-center border-l border-code-border/70 text-code-faint transition hover:bg-code-raised hover:text-code-accent disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-code-faint"
+                                    >
+                                        <Copy className="size-3.5" />
+                                    </button>
+                                )}
+                            </div>
+                        );
+                    })
+                )}
+            </div>
+
+            {variant === 'hero' && (
+                <div className="flex shrink-0 items-center gap-4 border-t border-code-border px-3 py-2 text-[9px] text-code-faint">
+                    <span>↑↓ Preview</span>
+                    <span>↵ Open</span>
+                    {inlineSuggestionAvailable && <span>Tab Complete</span>}
+                    {isWorkspace && (
+                        <span className="ml-auto hidden sm:inline">
+                            Double-click opens
+                        </span>
                     )}
                 </div>
             )}
@@ -336,9 +684,12 @@ export function SnippetSearch({
 
 function SearchResultContent({ result }: { result: SnippetSearchResult }) {
     if (result.kind === 'project') {
+        const ProjectIcon =
+            result.project.kind === 'guide' ? BookOpenText : Package;
+
         return (
             <>
-                <Package className="mt-0.5 size-3.5 shrink-0 text-code-muted" />
+                <ProjectIcon className="mt-0.5 size-3.5 shrink-0 text-code-muted" />
                 <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-2">
                         <span className="truncate text-xs font-medium text-code-text">
@@ -410,6 +761,11 @@ function SearchResultContent({ result }: { result: SnippetSearchResult }) {
                     <span className="truncate font-mono text-[10px] text-code-faint">
                         {result.snippet.filename}
                     </span>
+                    {result.snippet.content_type === 'guide' && (
+                        <span className="rounded border border-sky-400/20 bg-sky-400/5 px-1.5 py-0.5 text-[8px] text-sky-200">
+                            guide
+                        </span>
+                    )}
                     {result.variationName && (
                         <span className="truncate rounded border border-code-border px-1.5 py-0.5 text-[8px] text-code-muted">
                             {result.variationName}

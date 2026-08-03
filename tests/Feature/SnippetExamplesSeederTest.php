@@ -47,6 +47,8 @@ test('it seeds loop recipes and a cross-file Timber project with named variation
         ->where('filename', 'news.twig')
         ->sole();
     $twigFolder = $bundle->folders()->where('name', 'Timber Twig')->sole();
+    $phpFolder = $bundle->folders()->where('name', 'PHP')->sole();
+    $javascriptFolder = $bundle->folders()->where('name', 'JavaScript')->sole();
     $componentsFolder = $bundle->folders()->where('name', 'components')->sole();
     $viewsFolder = $project->folders()->where('name', 'views')->sole();
     $pagesFolder = $project->folders()->where('name', 'pages')->sole();
@@ -58,9 +60,9 @@ test('it seeds loop recipes and a cross-file Timber project with named variation
 
     expect($bundle->kind)->toBe('bundle')
         ->and($bundle->description)
-        ->toBe('Copy-ready foreach patterns with named code variations and reusable variable presets.')
+        ->toBe('Copy-ready PHP, Twig, and JavaScript loop patterns in separate files.')
         ->and($bundle->folders()->whereNull('parent_id')->orderBy('position')->pluck('name')->all())
-        ->toBe(['Timber Twig', 'PHP'])
+        ->toBe(['Timber Twig', 'PHP', 'JavaScript'])
         ->and($componentsFolder->parent_id)->toBe($twigFolder->id)
         ->and($timberLoop->title)->toBe('Timber Twig Foreach Loop')
         ->and($timberLoop->variations()->orderBy('position')->pluck('name')->all())
@@ -92,6 +94,52 @@ test('it seeds loop recipes and a cross-file Timber project with named variation
         ->and($phpDefault->name)->toBe('Escaped HTML list output')
         ->and($phpLoop->variablePresets()->orderBy('name')->pluck('name')->all())
         ->toBe(['Associative settings', 'Indexed items', 'WordPress fields'])
+        ->and($phpFolder->snippets()->orderBy('position')->pluck('filename')->all())
+        ->toBe([
+            'php-foreach.php',
+            'php-for.php',
+            'php-while.php',
+            'php-do-while.php',
+        ])
+        ->and($javascriptFolder->snippets()->orderBy('position')->pluck('filename')->all())
+        ->toBe([
+            'javascript-for.js',
+            'javascript-for-of.js',
+            'javascript-for-in.js',
+            'javascript-for-await-of.js',
+            'javascript-while.js',
+            'javascript-do-while.js',
+            'javascript-foreach.js',
+            'javascript-map.js',
+            'javascript-filter.js',
+            'javascript-reduce.js',
+            'javascript-reduce-right.js',
+            'javascript-find.js',
+            'javascript-find-index.js',
+            'javascript-find-last.js',
+            'javascript-find-last-index.js',
+            'javascript-some.js',
+            'javascript-every.js',
+            'javascript-flat-map.js',
+        ])
+        ->and(
+            $javascriptFolder->snippets()
+                ->where('filename', 'javascript-map.js')
+                ->sole()
+                ->variations()
+                ->where('is_default', true)
+                ->sole()
+                ->content,
+        )->toContain('.map(')
+        ->and(
+            $javascriptFolder->snippets()
+                ->where('filename', 'javascript-for-await-of.js')
+                ->sole()
+                ->variations()
+                ->where('is_default', true)
+                ->sole()
+                ->content,
+        )->toContain('for await (')
         ->and($postCard->folder_id)->toBe($componentsFolder->id)
         ->and($postCard->variations()->count())->toBe(2)
         ->and($teamMemberCard->folder_id)->toBe($componentsFolder->id)
@@ -1222,8 +1270,8 @@ test('rerunning the example seeder preserves user changes and creates no duplica
                 ->withCount('folders')
                 ->get()
                 ->sum('folders_count'),
-        )->toBe(37)
-        ->and($user->snippets()->count())->toBe(116)
+        )->toBe(38)
+        ->and($user->snippets()->count())->toBe(137)
         ->and($wordpressProject->folders()->count())->toBe(18)
         ->and($wordpressProject->snippets()->count())->toBe(59)
         ->and($visualProject->folders()->count())->toBe(8)

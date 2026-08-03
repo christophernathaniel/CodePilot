@@ -1,162 +1,164 @@
 import type { GuideCodeBlock, GuideStep } from '@/types/snippets';
 
 const guideStepMarkerPattern =
-    /^[\t ]*\{!#[\t ]*guide-step[\t ]*:[\t ]*([A-Za-z0-9][A-Za-z0-9._-]{0,99})[\t ]*\|[\t ]*(.+?)[\t ]*#!\}[\t ]*$/u;
+    /^[\t ]*\{!#[\t ]*guide-step[\t ]*:[\t ]*([A-Za-z0-9][A-Za-z0-9._-]{0,99})[\t ]*\|[\t ]*([^\r\n]{1,255}?)[\t ]*#!\}[\t ]*(?:\r\n|\n|\r|$)/gmu;
 
-const fenceStartPattern =
-    /^[\t ]*(`{3,}|~{3,})[\t ]*([A-Za-z0-9_+#.-]*)[^\n]*$/u;
+const guideStepMarkerLinePattern =
+    /^[\t ]*\{!#[\t ]*guide-step[\t ]*:[\t ]*[A-Za-z0-9][A-Za-z0-9._-]{0,99}[\t ]*\|[\t ]*[^\r\n]{1,255}?[\t ]*#!\}[\t ]*$/u;
+
+const codeFencePattern =
+    /^[\t ]*(`{3,}|~{3,})[\t ]*([^\r\n]*)[\t ]*(?:\r\n|\n|\r)(.*?)(?:^[\t ]*\1[\t ]*(?:\r\n|\n|\r|$))/gmsu;
 
 type GuideStepMarker = {
     key: string;
     title: string;
-    lineIndex: number;
+    offset: number;
+    length: number;
+};
+
+type CodeFenceMatch = {
+    offset: number;
+    length: number;
+    language: string;
+    code: string;
+    codeOffset: number;
 };
 
 /**
  * Parse the editable guide file format into ordered playback steps.
  *
  * Step markers use `{!# guide-step: step-key | Human title #!}` and each
- * fenced Markdown block inside the step becomes an independently highlighted
- * code example. Content before the first marker is intentionally treated as
- * file-level prose and is not included in playback.
+ * complete fenced Markdown block inside the step becomes an independently
+ * highlighted code example. Content before the first marker is file-level
+ * prose and is intentionally not included in playback.
  */
 export function parseGuideSteps(source: string): GuideStep[] {
-    const lines = source.replace(/\r\n?/gu, '\n').split('\n');
-    const markers = findGuideStepMarkers(lines);
+    const markers = findGuideStepMarkers(source);
 
-    return markers.map((marker, position) => {
-        const nextMarker = markers[position + 1];
-        const contentStartIndex = marker.lineIndex + 1;
-        const contentEndIndex = nextMarker
-            ? nextMarker.lineIndex - 1
-            : lines.length - 1;
-        const parsedContent = parseStepContent(
-            lines,
-            contentStartIndex,
-            contentEndIndex,
-        );
+    return markers.map((marker, index) => {
+        const contentStart = marker.offset + marker.length;
+        const contentEnd = markers[index + 1]?.offset ?? source.length;
+        const stepContent = source.slice(contentStart, contentEnd);
+        const markerLine = lineAtOffset(source, marker.offset);
+        const startLine = markerLine + 1;
 
         return {
             key: marker.key,
             title: marker.title,
-            position: position + 1,
-            marker_line: marker.lineIndex + 1,
-            start_line: contentStartIndex + 1,
-            end_line: Math.max(contentStartIndex + 1, contentEndIndex + 1),
-            instructions: parsedContent.instructions,
-            code_blocks: parsedContent.codeBlocks,
+            position: index + 1,
+            marker_line: markerLine,
+            start_line: startLine,
+            end_line:
+                stepContent === ''
+                    ? startLine
+                    : lineAtOffset(
+                          source,
+                          endOffset(source, contentStart, contentEnd),
+                      ),
+            ...parseStepContent(source, stepContent, contentStart),
         };
     });
 }
 
 export function isGuideStepMarker(line: string): boolean {
-    return guideStepMarkerPattern.test(line);
+    return guideStepMarkerLinePattern.test(line);
 }
 
-function findGuideStepMarkers(lines: readonly string[]): GuideStepMarker[] {
+function findGuideStepMarkers(source: string): GuideStepMarker[] {
     const markers: GuideStepMarker[] = [];
+    const keyCounts = new Map<string, number>();
 
-    lines.forEach((line, lineIndex) => {
-        const match = guideStepMarkerPattern.exec(line);
-
-        if (!match) {
-            return;
-        }
+    for (const match of source.matchAll(guideStepMarkerPattern)) {
+        const baseKey = match[1].toLowerCase();
+        const occurrence = (keyCounts.get(baseKey) ?? 0) + 1;
+        keyCounts.set(baseKey, occurrence);
 
         markers.push({
-            key: match[1],
-            title: match[2].trim(),
-            lineIndex,
+            key: occurrence === 1 ? baseKey : `${baseKey}#${occurrence}`,
+            title: match[2].trim().replace(/\s+/gu, ' '),
+            offset: match.index,
+            length: match[0].length,
         });
-    });
+    }
 
     return markers;
 }
 
 function parseStepContent(
-    lines: readonly string[],
-    startIndex: number,
-    endIndex: number,
-): { instructions: string; codeBlocks: GuideCodeBlock[] } {
-    const instructionLines: string[] = [];
-    const codeBlocks: GuideCodeBlock[] = [];
-    let lineIndex = startIndex;
+    source: string,
+    stepContent: string,
+    contentStart: number,
+): { instructions: string; code_blocks: GuideCodeBlock[] } {
+    const matches = findCodeFences(stepContent);
+    const codeBlocks = matches.map((match) => {
+        const codeStart = contentStart + match.codeOffset;
+        const codeEnd = codeStart + match.code.length;
+        const startLine = lineAtOffset(source, codeStart);
 
-    while (lineIndex <= endIndex) {
-        const fenceMatch = fenceStartPattern.exec(lines[lineIndex]);
+        return {
+            language: match.language,
+            content: match.code,
+            start_line: startLine,
+            end_line:
+                match.code === ''
+                    ? startLine
+                    : lineAtOffset(
+                          source,
+                          endOffset(source, codeStart, codeEnd),
+                      ),
+        };
+    });
+    let instructions = stepContent;
 
-        if (!fenceMatch) {
-            instructionLines.push(lines[lineIndex]);
-            lineIndex += 1;
-
-            continue;
-        }
-
-        const fence = fenceMatch[1];
-        const fenceCharacter = fence[0];
-        const language = fenceMatch[2].trim().toLowerCase() || 'plaintext';
-        const codeStartIndex = lineIndex + 1;
-        let closingFenceIndex = endIndex + 1;
-
-        for (
-            let candidateIndex = codeStartIndex;
-            candidateIndex <= endIndex;
-            candidateIndex += 1
-        ) {
-            const candidate = lines[candidateIndex].trim();
-
-            if (
-                candidate.length >= fence.length &&
-                candidate.split('').every((character) => character === fenceCharacter)
-            ) {
-                closingFenceIndex = candidateIndex;
-                break;
-            }
-        }
-
-        const codeEndIndex = Math.min(closingFenceIndex - 1, endIndex);
-        const code = lines
-            .slice(codeStartIndex, codeEndIndex + 1)
-            .join('\n')
-            .replace(/\s+$/u, '');
-
-        codeBlocks.push({
-            language,
-            content: code,
-            start_line: codeStartIndex + 1,
-            end_line: Math.max(codeStartIndex + 1, codeEndIndex + 1),
-        });
-
-        if (
-            instructionLines.length > 0 &&
-            instructionLines.at(-1)?.trim() !== ''
-        ) {
-            instructionLines.push('');
-        }
-
-        lineIndex =
-            closingFenceIndex <= endIndex
-                ? closingFenceIndex + 1
-                : endIndex + 1;
-    }
+    [...matches].reverse().forEach((match) => {
+        instructions = `${instructions.slice(0, match.offset)}${instructions.slice(match.offset + match.length)}`;
+    });
 
     return {
-        instructions: trimBlankLines(instructionLines).join('\n'),
-        codeBlocks,
+        instructions: instructions
+            .replace(/(?:\r\n|\n|\r){3,}/gu, '\n\n')
+            .trim(),
+        code_blocks: codeBlocks,
     };
 }
 
-function trimBlankLines(lines: string[]): string[] {
-    let start = 0;
-    let end = lines.length;
+function findCodeFences(stepContent: string): CodeFenceMatch[] {
+    return [...stepContent.matchAll(codeFencePattern)].map((match) => {
+        const openingLineBreak = /\r\n|\n|\r/u.exec(match[0]);
+        const codeOffset =
+            match.index +
+            (openingLineBreak?.index ?? 0) +
+            (openingLineBreak?.[0].length ?? 0);
+        const language = match[2].trim().split(/\s+/u)[0]?.toLowerCase();
 
-    while (start < end && lines[start].trim() === '') {
-        start += 1;
+        return {
+            offset: match.index,
+            length: match[0].length,
+            language: language || 'plaintext',
+            code: match[3],
+            codeOffset,
+        };
+    });
+}
+
+function lineAtOffset(source: string, offset: number): number {
+    return (source.slice(0, offset).match(/\r\n|\n|\r/gu)?.length ?? 0) + 1;
+}
+
+function endOffset(
+    source: string,
+    contentStart: number,
+    contentEnd: number,
+): number {
+    const offset = Math.max(contentStart, contentEnd - 1);
+
+    if (
+        offset > contentStart &&
+        source[offset] === '\n' &&
+        source[offset - 1] === '\r'
+    ) {
+        return offset - 1;
     }
 
-    while (end > start && lines[end - 1].trim() === '') {
-        end -= 1;
-    }
-
-    return lines.slice(start, end);
+    return offset;
 }
