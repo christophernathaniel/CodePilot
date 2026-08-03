@@ -19,6 +19,43 @@ test('second brain batches svg connections into compound paths', function () {
         ->not->toContain('y1: var(--brain-y1)');
 });
 
+test('second brain adds subtle idle motion and travelling connection signals', function () {
+    $component = file_get_contents(
+        dirname(__DIR__, 2).'/resources/js/components/snippets/second-brain.tsx',
+    );
+    $stylesheet = file_get_contents(
+        dirname(__DIR__, 2).'/resources/css/app.css',
+    );
+
+    expect($component)
+        ->toContain('buildBrainSignals(visibleGraph.edges, positions)')
+        ->toContain('buildBrainEdgeFlickers(visibleGraph.edges, positions)')
+        ->toContain('<animateMotion')
+        ->toContain('keyPoints="0;0;1;1"')
+        ->toContain('second-brain-node--sway')
+        ->toContain('brainNodeSway(node)')
+        ->and($stylesheet)
+        ->toContain('@keyframes second-brain-node-sway')
+        ->toContain('@keyframes second-brain-edge-flicker')
+        ->toContain('.second-brain-edge-flicker')
+        ->toContain('.second-brain-signal')
+        ->toContain('prefers-reduced-motion: reduce')
+        ->toContain('animation: none')
+        ->toContain('display: none');
+});
+
+test('second brain supports close inspection with stronger zoom controls', function () {
+    $component = file_get_contents(
+        dirname(__DIR__, 2).'/resources/js/components/snippets/second-brain.tsx',
+    );
+
+    expect($component)
+        ->toContain('const maximumBrainZoom = 3.25')
+        ->toContain('const brainZoomStep = 0.25')
+        ->toContain('const brainWheelZoomStep = 0.18')
+        ->toContain('title="Zoom in to inspect individual connections"');
+});
+
 test('second brain supports category comparison without the large detail panel', function () {
     $component = file_get_contents(
         dirname(__DIR__, 2).'/resources/js/components/snippets/second-brain.tsx',

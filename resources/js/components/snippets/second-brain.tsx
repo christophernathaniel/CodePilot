@@ -76,6 +76,12 @@ type BrainLayout = 'single' | 'split' | 'quad';
 type GraphCustomProperties = CSSProperties & {
     '--brain-x'?: string;
     '--brain-y'?: string;
+    '--brain-sway-x'?: string;
+    '--brain-sway-y'?: string;
+    '--brain-sway-delay'?: string;
+    '--brain-sway-duration'?: string;
+    '--brain-flicker-delay'?: string;
+    '--brain-flicker-duration'?: string;
 };
 
 type DragState = {
@@ -94,6 +100,25 @@ type BrainEdgePath = {
     strokeWidth: number;
     emphasized: boolean;
 };
+
+type BrainSignal = {
+    id: string;
+    data: string;
+    delay: number;
+    duration: number;
+    opacity: number;
+};
+
+type BrainEdgeFlicker = {
+    id: string;
+    data: string;
+    style: GraphCustomProperties;
+};
+
+const minimumBrainZoom = 0.7;
+const maximumBrainZoom = 3.25;
+const brainZoomStep = 0.25;
+const brainWheelZoomStep = 0.18;
 
 const nodePalette: Record<
     BrainNodeKind,
@@ -592,6 +617,14 @@ function BrainPane({
             visibleGraph.edges,
         ],
     );
+    const signals = useMemo(
+        () => buildBrainSignals(visibleGraph.edges, positions),
+        [positions, visibleGraph.edges],
+    );
+    const edgeFlickers = useMemo(
+        () => buildBrainEdgeFlickers(visibleGraph.edges, positions),
+        [positions, visibleGraph.edges],
+    );
     const focusedNeighbours = focusNodeId
         ? (adjacency.get(focusNodeId) ?? new Set<string>())
         : new Set<string>();
@@ -809,7 +842,14 @@ function BrainPane({
     const handleWheel = (event: ReactWheelEvent<SVGSVGElement>) => {
         event.preventDefault();
         setZoom((current) =>
-            clamp(current + (event.deltaY < 0 ? 0.1 : -0.1), 0.72, 1.85),
+            clamp(
+                current +
+                    (event.deltaY < 0
+                        ? brainWheelZoomStep
+                        : -brainWheelZoomStep),
+                minimumBrainZoom,
+                maximumBrainZoom,
+            ),
         );
     };
 
@@ -951,6 +991,36 @@ function BrainPane({
                             vectorEffect="non-scaling-stroke"
                         />
                     ))}
+                    {signals.map((signal) => (
+                        <circle
+                            key={signal.id}
+                            r={2.15}
+                            opacity={signal.opacity}
+                            className="second-brain-signal fill-white"
+                        >
+                            <animateMotion
+                                path={signal.data}
+                                dur={`${signal.duration}s`}
+                                begin={`${signal.delay}s`}
+                                repeatCount="indefinite"
+                                calcMode="linear"
+                                keyPoints="0;0;1;1"
+                                keyTimes="0;0.74;0.92;1"
+                            />
+                        </circle>
+                    ))}
+                    {edgeFlickers.map((flicker) => (
+                        <path
+                            key={flicker.id}
+                            d={flicker.data}
+                            fill="none"
+                            style={flicker.style}
+                            className="second-brain-edge-flicker stroke-sky-100"
+                            strokeWidth={1.7}
+                            strokeLinecap="round"
+                            vectorEffect="non-scaling-stroke"
+                        />
+                    ))}
                 </g>
 
                 <g>
@@ -987,9 +1057,11 @@ function BrainPane({
                                 'collection',
                                 'project',
                             ].includes(node.kind);
+                        const sway = brainNodeSway(node);
                         const style: GraphCustomProperties = {
                             '--brain-x': `${position.x}px`,
                             '--brain-y': `${position.y}px`,
+                            ...sway,
                             opacity,
                         };
 
@@ -1031,7 +1103,13 @@ function BrainPane({
                                 onKeyDown={(event) =>
                                     handleNodeKeyDown(event, node)
                                 }
-                                className="second-brain-node cursor-pointer outline-none motion-reduce:transition-none"
+                                className={cn(
+                                    'second-brain-node cursor-pointer outline-none motion-reduce:transition-none',
+                                    sway &&
+                                        !isFocused &&
+                                        !isSelected &&
+                                        'second-brain-node--sway',
+                                )}
                             >
                                 <title>
                                     {node.label} · {node.description}
@@ -1101,7 +1179,13 @@ function BrainPane({
                     type="button"
                     aria-label={`Zoom out ${view.label}`}
                     onClick={() =>
-                        setZoom((current) => clamp(current - 0.15, 0.72, 1.85))
+                        setZoom((current) =>
+                            clamp(
+                                current - brainZoomStep,
+                                minimumBrainZoom,
+                                maximumBrainZoom,
+                            ),
+                        )
                     }
                     className="rounded-md p-1.5 text-sky-200/50 transition hover:bg-sky-300/10 hover:text-sky-100 focus-visible:outline-2 focus-visible:outline-sky-400"
                 >
@@ -1115,8 +1199,15 @@ function BrainPane({
                 <button
                     type="button"
                     aria-label={`Zoom in ${view.label}`}
+                    title="Zoom in to inspect individual connections"
                     onClick={() =>
-                        setZoom((current) => clamp(current + 0.15, 0.72, 1.85))
+                        setZoom((current) =>
+                            clamp(
+                                current + brainZoomStep,
+                                minimumBrainZoom,
+                                maximumBrainZoom,
+                            ),
+                        )
                     }
                     className="rounded-md p-1.5 text-sky-200/50 transition hover:bg-sky-300/10 hover:text-sky-100 focus-visible:outline-2 focus-visible:outline-sky-400"
                 >
@@ -1314,6 +1405,97 @@ function buildBrainEdgePaths({
             ...path,
             data: commands.join(' '),
         }));
+}
+
+function buildBrainSignals(
+    edges: BrainEdge[],
+    positions: ReadonlyMap<string, BrainPosition>,
+): BrainSignal[] {
+    return edges
+        .map((edge) => {
+            const source = positions.get(edge.source);
+            const target = positions.get(edge.target);
+            const hash = brainMotionHash(edge.id);
+
+            if (!source || !target || hash % 3 !== 0) {
+                return null;
+            }
+
+            return {
+                id: `signal:${edge.id}`,
+                data: `M ${roundBrainCoordinate(source.x)} ${roundBrainCoordinate(source.y)} L ${roundBrainCoordinate(target.x)} ${roundBrainCoordinate(target.y)}`,
+                delay: (hash % 48) / 10,
+                duration: 6.5 + ((hash >> 4) % 30) / 10,
+                opacity: edge.kind === 'hierarchy' ? 0.8 : 0.68,
+            } satisfies BrainSignal;
+        })
+        .filter((signal): signal is BrainSignal => signal !== null)
+        .slice(0, 12);
+}
+
+function buildBrainEdgeFlickers(
+    edges: BrainEdge[],
+    positions: ReadonlyMap<string, BrainPosition>,
+): BrainEdgeFlicker[] {
+    return edges
+        .map((edge) => ({ edge, hash: brainMotionHash(edge.id) }))
+        .sort((left, right) => left.hash - right.hash)
+        .slice(0, Math.min(8, Math.max(1, Math.ceil(edges.length / 10))))
+        .flatMap(({ edge, hash }) => {
+            const source = positions.get(edge.source);
+            const target = positions.get(edge.target);
+
+            if (!source || !target) {
+                return [];
+            }
+
+            return [
+                {
+                    id: `flicker:${edge.id}`,
+                    data: `M ${roundBrainCoordinate(source.x)} ${roundBrainCoordinate(source.y)} L ${roundBrainCoordinate(target.x)} ${roundBrainCoordinate(target.y)}`,
+                    style: {
+                        '--brain-flicker-delay': `-${(hash % 90) / 10}s`,
+                        '--brain-flicker-duration': `${8 + ((hash >> 5) % 35) / 10}s`,
+                    },
+                } satisfies BrainEdgeFlicker,
+            ];
+        });
+}
+
+function brainNodeSway(node: BrainNode): GraphCustomProperties | null {
+    if (
+        !['folder', 'snippet', 'tag', 'framework', 'language'].includes(
+            node.kind,
+        )
+    ) {
+        return null;
+    }
+
+    const hash = brainMotionHash(node.id);
+
+    if (hash % 3 !== 0) {
+        return null;
+    }
+
+    const horizontalDistance = 1.5 + (hash % 20) / 10;
+    const verticalDistance = 1.2 + ((hash >> 4) % 16) / 10;
+
+    return {
+        '--brain-sway-x': `${hash % 2 === 0 ? horizontalDistance : -horizontalDistance}px`,
+        '--brain-sway-y': `${hash % 4 < 2 ? verticalDistance : -verticalDistance}px`,
+        '--brain-sway-delay': `-${(hash % 70) / 10}s`,
+        '--brain-sway-duration': `${7 + ((hash >> 7) % 30) / 10}s`,
+    };
+}
+
+function brainMotionHash(value: string): number {
+    let hash = 0;
+
+    for (let index = 0; index < value.length; index += 1) {
+        hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+    }
+
+    return hash;
 }
 
 function roundBrainCoordinate(value: number): number {

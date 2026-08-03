@@ -200,15 +200,81 @@
         opacity 240ms ease-out;
 }
 
+.second-brain-node--sway {
+    animation: second-brain-node-sway var(--brain-sway-duration, 8s) ease-in-out
+        var(--brain-sway-delay, 0s) infinite;
+}
+
+.second-brain-node--sway:hover,
+.second-brain-node--sway:focus {
+    animation-play-state: paused;
+}
+
+@keyframes second-brain-node-sway {
+    0%,
+    100% {
+        transform: translate(var(--brain-x), var(--brain-y)) translate(0, 0);
+    }
+
+    50% {
+        transform: translate(var(--brain-x), var(--brain-y))
+            translate(var(--brain-sway-x), var(--brain-sway-y));
+    }
+}
+
 .second-brain-edge {
     transition:
         opacity 240ms ease-out,
         stroke-width 240ms ease-out;
 }
 
+.second-brain-signal {
+    filter: drop-shadow(0 0 3px rgb(255 255 255 / 0.95));
+}
+
+.second-brain-edge-flicker {
+    animation: second-brain-edge-flicker var(--brain-flicker-duration, 9s)
+        steps(1, end) var(--brain-flicker-delay, 0s) infinite;
+    filter: drop-shadow(0 0 3px rgb(186 230 253 / 0.9));
+    opacity: 0;
+}
+
+@keyframes second-brain-edge-flicker {
+    0%,
+    78%,
+    100% {
+        opacity: 0;
+    }
+
+    80% {
+        opacity: 0.9;
+    }
+
+    82% {
+        opacity: 0.18;
+    }
+
+    85% {
+        opacity: 0.72;
+    }
+
+    88% {
+        opacity: 0;
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     .second-brain-node,
     .second-brain-edge {
         transition: none;
+    }
+
+    .second-brain-node--sway {
+        animation: none;
+    }
+
+    .second-brain-edge-flicker,
+    .second-brain-signal {
+        display: none;
     }
 }
