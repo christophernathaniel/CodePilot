@@ -1,5 +1,4 @@
 import {
-    ArrowUpRight,
     BrainCircuit,
     Braces,
     Boxes,
@@ -31,6 +30,7 @@ import type {
     PointerEvent as ReactPointerEvent,
     WheelEvent as ReactWheelEvent,
 } from 'react';
+import { SyntaxHighlightedCode } from '@/components/snippets/syntax-highlighted-code';
 import {
     brainNodeKindLabel,
     buildBrainAdjacency,
@@ -54,7 +54,12 @@ import type {
     BrainPosition,
 } from '@/lib/snippets/second-brain-graph';
 import { cn } from '@/lib/utils';
-import type { LibraryCategory, Snippet, SnippetProject } from '@/types';
+import type {
+    LibraryCategory,
+    Snippet,
+    SnippetFolder,
+    SnippetProject,
+} from '@/types';
 
 type Props = {
     libraryCategories: LibraryCategory[];
@@ -113,6 +118,14 @@ type BrainEdgeFlicker = {
     id: string;
     data: string;
     style: GraphCustomProperties;
+};
+
+type BrainFileBrowserItem = {
+    id: string;
+    kind: 'collection' | 'project' | 'folder' | 'snippet';
+    label: string;
+    detail?: string;
+    children: BrainFileBrowserItem[];
 };
 
 const minimumBrainZoom = 0.7;
@@ -572,8 +585,6 @@ function BrainPane({
         [visibleGraph],
     );
     const focusNodeId = validHoveredNodeId ?? validSelectedNodeId;
-    const detailNodeId = validHoveredNodeId ?? validSelectedNodeId;
-    const detailNode = detailNodeId ? nodeById.get(detailNodeId) : undefined;
     const positions = useMemo(
         () => focusedBrainPositions(visibleGraph, focusNodeId, adjacency),
         [adjacency, focusNodeId, visibleGraph],
@@ -1167,12 +1178,15 @@ function BrainPane({
                 </g>
             </svg>
 
-            <NodePeek
-                node={detailNode}
-                selected={detailNode?.id === validSelectedNodeId}
-                compact={compact}
-                onOpen={detailNode ? () => openNode(detailNode) : undefined}
-            />
+            {validSelectedNodeId && (
+                <BrainSelectionPanel
+                    node={nodeById.get(validSelectedNodeId)!}
+                    view={view}
+                    compact={compact}
+                    onClose={() => setSelectedNodeId(null)}
+                    onSelectNode={selectNode}
+                />
+            )}
 
             <div className="absolute bottom-3 left-3 z-20 flex items-center gap-0.5 rounded-lg border border-sky-900/60 bg-[#091725]/90 p-0.5 shadow-[0_12px_35px_rgba(0,0,0,0.22)]">
                 <button
@@ -1224,7 +1238,7 @@ function BrainPane({
                 </button>
             </div>
 
-            {!compact && !detailNode && (
+            {!compact && !validSelectedNodeId && (
                 <div className="pointer-events-none absolute bottom-4 left-1/2 hidden -translate-x-1/2 items-center gap-4 text-[8px] tracking-[0.1em] text-sky-200/35 uppercase md:flex">
                     <LegendDot className="bg-cyan-400" label="Workspace" />
                     <LegendDot className="bg-blue-300" label="Folder" />
@@ -1236,61 +1250,163 @@ function BrainPane({
     );
 }
 
-function NodePeek({
+function BrainSelectionPanel({
     node,
-    selected,
+    view,
     compact,
-    onOpen,
+    onClose,
+    onSelectNode,
 }: {
-    node: BrainNode | undefined;
-    selected: boolean;
+    node: BrainNode;
+    view: BrainCategoryView;
     compact: boolean;
-    onOpen?: () => void;
+    onClose: () => void;
+    onSelectNode: (nodeId: string) => void;
 }) {
-    if (!node) {
-        return null;
-    }
-
     const Icon = nodeIcons[node.kind];
+    const selectedSnippet = resolveBrainSnippet(node, view);
+    const variation = selectedSnippet
+        ? (selectedSnippet.variations.find(
+              (candidate) => candidate.is_default,
+          ) ?? selectedSnippet.variations[0])
+        : undefined;
+    const fileBrowserItems = useMemo(
+        () => buildBrainFileBrowser(node, view),
+        [node, view],
+    );
 
     return (
         <aside
+            aria-label={`${node.label} details`}
             className={cn(
-                'pointer-events-none absolute right-3 bottom-3 z-20 flex w-[min(19rem,calc(100%-5.5rem))] items-center gap-2.5 rounded-xl border bg-[#0a1827]/94 p-2.5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md',
-                selected ? 'border-sky-400/55' : 'border-sky-900/70',
+                'absolute inset-y-0 right-0 z-30 flex w-[min(28rem,calc(100%-0.75rem))] min-w-0 flex-col border-l border-sky-700/60 bg-[#071321]/97 shadow-[-18px_0_42px_rgba(0,0,0,0.34)] backdrop-blur-md',
+                compact && 'w-[min(22rem,calc(100%-0.5rem))]',
             )}
         >
-            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-sky-300/8 text-sky-300/65">
-                <Icon className="size-4" />
-            </span>
-            <span className="min-w-0 flex-1">
-                <span className="block truncate text-[8px] font-semibold tracking-[0.14em] text-sky-300/45 uppercase">
-                    {node.eyebrow}
+            <header className="flex shrink-0 items-start gap-2.5 border-b border-sky-900/70 px-3 py-3">
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-sky-300/8 text-sky-300/75">
+                    <Icon className="size-4" />
                 </span>
-                <span className="mt-0.5 block truncate text-[11px] font-medium text-sky-50">
-                    {node.label}
+                <span className="min-w-0 flex-1">
+                    <span className="block text-[8px] font-semibold tracking-[0.14em] text-sky-300/45 uppercase">
+                        {node.eyebrow}
+                    </span>
+                    <span className="mt-0.5 block truncate text-[12px] font-medium text-sky-50">
+                        {node.label}
+                    </span>
+                    <span className="mt-1 block text-[9px] leading-4 text-sky-100/45">
+                        {node.description}
+                    </span>
                 </span>
-                <span
-                    className={cn(
-                        'mt-0.5 line-clamp-2 text-[9px] leading-4 text-sky-100/45',
-                        compact && 'line-clamp-1',
-                    )}
-                >
-                    {node.description}
-                </span>
-            </span>
-            {selected && node.action && onOpen && (
                 <button
                     type="button"
-                    aria-label={`${actionLabel(node)}: ${node.label}`}
-                    title={actionLabel(node)}
-                    onClick={onOpen}
-                    className="pointer-events-auto grid size-8 shrink-0 place-items-center rounded-lg bg-sky-300/10 text-sky-200/70 transition hover:bg-sky-300/18 hover:text-sky-50 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
+                    aria-label={`Close ${node.label} details`}
+                    title="Close details"
+                    onClick={onClose}
+                    className="grid size-7 shrink-0 place-items-center rounded-md text-sky-200/45 transition hover:bg-sky-300/10 hover:text-sky-50 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
                 >
-                    <ArrowUpRight className="size-3.5" />
+                    <X className="size-3.5" />
                 </button>
+            </header>
+
+            {selectedSnippet && variation ? (
+                <section className="flex min-h-0 flex-1 flex-col">
+                    <div className="flex shrink-0 items-center gap-2 border-b border-sky-900/55 px-3 py-2 text-[9px]">
+                        <FileCode2 className="size-3.5 text-sky-300/65" />
+                        <span className="min-w-0 flex-1 truncate font-mono text-sky-100/75">
+                            {selectedSnippet.filename}
+                        </span>
+                        <span className="rounded bg-sky-300/8 px-1.5 py-0.5 text-[8px] tracking-[0.08em] text-sky-200/55 uppercase">
+                            {selectedSnippet.language}
+                        </span>
+                    </div>
+                    <SyntaxHighlightedCode
+                        source={variation.content}
+                        language={selectedSnippet.language}
+                        ariaLabel={`${selectedSnippet.filename} source code`}
+                        className="h-full max-h-none flex-1 bg-[#06101b]"
+                    />
+                </section>
+            ) : (
+                <section className="flex min-h-0 flex-1 flex-col">
+                    <div className="flex shrink-0 items-center gap-2 border-b border-sky-900/55 px-3 py-2">
+                        <FolderTree className="size-3.5 text-sky-300/65" />
+                        <span className="text-[8px] font-semibold tracking-[0.14em] text-sky-200/45 uppercase">
+                            Contents
+                        </span>
+                    </div>
+                    {fileBrowserItems.length > 0 ? (
+                        <BrainFileBrowser
+                            items={fileBrowserItems}
+                            onSelectNode={onSelectNode}
+                        />
+                    ) : (
+                        <p className="px-3 py-4 text-[10px] leading-5 text-sky-100/45">
+                            No files are connected to this item yet.
+                        </p>
+                    )}
+                </section>
             )}
         </aside>
+    );
+}
+
+function BrainFileBrowser({
+    items,
+    onSelectNode,
+    depth = 0,
+}: {
+    items: BrainFileBrowserItem[];
+    onSelectNode: (nodeId: string) => void;
+    depth?: number;
+}) {
+    return (
+        <div className="min-h-0 flex-1 overflow-auto py-1.5">
+            {items.map((item) => {
+                const Icon =
+                    item.kind === 'snippet'
+                        ? FileCode2
+                        : item.kind === 'folder'
+                          ? Folder
+                          : item.kind === 'collection'
+                            ? FolderTree
+                            : Braces;
+
+                return (
+                    <div key={item.id}>
+                        <button
+                            type="button"
+                            aria-label={`Select ${item.kind}: ${item.label}`}
+                            onClick={() => onSelectNode(item.id)}
+                            style={{ paddingLeft: `${12 + depth * 14}px` }}
+                            className="focus-visible:outline-inset flex min-h-7 w-full items-center gap-1.5 pr-3 text-left text-[10px] text-sky-100/65 transition hover:bg-sky-300/8 hover:text-sky-50 focus-visible:outline-2 focus-visible:outline-sky-400"
+                        >
+                            {item.children.length > 0 ? (
+                                <ChevronDown className="size-3 shrink-0 text-sky-300/40" />
+                            ) : (
+                                <span className="w-3 shrink-0" />
+                            )}
+                            <Icon className="size-3.5 shrink-0 text-sky-300/55" />
+                            <span className="min-w-0 flex-1 truncate">
+                                {item.label}
+                            </span>
+                            {item.detail && (
+                                <span className="shrink-0 truncate text-[8px] text-sky-200/35">
+                                    {item.detail}
+                                </span>
+                            )}
+                        </button>
+                        {item.children.length > 0 && (
+                            <BrainFileBrowser
+                                items={item.children}
+                                onSelectNode={onSelectNode}
+                                depth={depth + 1}
+                            />
+                        )}
+                    </div>
+                );
+            })}
+        </div>
     );
 }
 
@@ -1303,16 +1419,218 @@ function LegendDot({ className, label }: { className: string; label: string }) {
     );
 }
 
-function actionLabel(node: BrainNode): string {
-    if (node.action?.type === 'snippet') {
-        return 'Open file';
+function resolveBrainSnippet(
+    node: BrainNode,
+    view: BrainCategoryView,
+): Snippet | undefined {
+    if (node.kind !== 'snippet') {
+        return undefined;
     }
 
-    if (node.action?.type === 'project' || node.action?.type === 'folder') {
-        return 'Reveal in library';
+    return allBrainSnippets(view).find(
+        (snippet) => node.id === `snippet:${snippet.id}`,
+    );
+}
+
+function buildBrainFileBrowser(
+    node: BrainNode,
+    view: BrainCategoryView,
+): BrainFileBrowserItem[] {
+    const projectById = new Map(
+        view.projects.map((project) => [project.id, project]),
+    );
+    const allSnippets = allBrainSnippets(view);
+    const projectItem = (project: SnippetProject): BrainFileBrowserItem => ({
+        id: `project:${project.id}`,
+        kind: 'project',
+        label: project.name,
+        detail: project.kind,
+        children: brainProjectContents(project),
+    });
+    const matchingSnippets = (
+        predicate: (snippet: Snippet) => boolean,
+    ): BrainFileBrowserItem[] =>
+        allSnippets
+            .filter(predicate)
+            .sort((left, right) => left.filename.localeCompare(right.filename))
+            .map((snippet) => brainSnippetItem(snippet));
+
+    if (node.kind === 'project') {
+        const project = projectById.get(
+            Number(node.id.replace('project:', '')),
+        );
+
+        return project ? brainProjectContents(project) : [];
     }
 
-    return 'Browse related files';
+    if (node.kind === 'collection') {
+        return view.standaloneSnippets
+            .slice()
+            .sort((left, right) => left.filename.localeCompare(right.filename))
+            .map((snippet) => brainSnippetItem(snippet));
+    }
+
+    if (node.kind === 'folder') {
+        const folderId = Number(node.id.replace('folder:', ''));
+        const project = view.projects.find((candidate) =>
+            candidate.folders.some((folder) => folder.id === folderId),
+        );
+
+        return project ? brainProjectContents(project, folderId) : [];
+    }
+
+    if (node.kind === 'category') {
+        const categoryId = node.id.startsWith('category:')
+            ? Number(node.id.replace('category:', ''))
+            : null;
+        const categoryProjects = view.projects.filter((project) =>
+            Number.isInteger(categoryId)
+                ? project.library_category_id === categoryId
+                : project.library_category_id === null,
+        );
+
+        return categoryProjects.map((project) => projectItem(project));
+    }
+
+    if (node.kind === 'tag') {
+        return matchingSnippets((snippet) =>
+            snippet.tags.some((tag) => node.id === `tag:${tag.id}`),
+        );
+    }
+
+    if (node.kind === 'framework') {
+        return matchingSnippets(
+            (snippet) =>
+                snippet.frameworks.some(
+                    (framework) => node.id === `framework:${framework.id}`,
+                ) ||
+                (snippet.project_id !== null &&
+                    projectById
+                        .get(snippet.project_id)
+                        ?.frameworks.some(
+                            (framework) =>
+                                node.id === `framework:${framework.id}`,
+                        ) === true),
+        );
+    }
+
+    if (node.kind === 'language') {
+        return matchingSnippets(
+            (snippet) => node.id === `language:${snippet.language}`,
+        );
+    }
+
+    const projectItems = view.projects
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map((project) => projectItem(project));
+
+    if (view.standaloneSnippets.length > 0) {
+        projectItems.push({
+            id: 'collection:standalone',
+            kind: 'collection',
+            label: 'Standalone files',
+            children: view.standaloneSnippets
+                .slice()
+                .sort((left, right) =>
+                    left.filename.localeCompare(right.filename),
+                )
+                .map((snippet) => brainSnippetItem(snippet)),
+        });
+    }
+
+    return projectItems;
+}
+
+function allBrainSnippets(view: BrainCategoryView): Snippet[] {
+    return [
+        ...view.standaloneSnippets,
+        ...view.projects.flatMap((project) => project.snippets),
+    ];
+}
+
+function brainProjectContents(
+    project: SnippetProject,
+    parentFolderId: number | null = null,
+    ancestry = new Set<number>(),
+): BrainFileBrowserItem[] {
+    const foldersById = new Map(
+        project.folders.map((folder) => [folder.id, folder]),
+    );
+    const normalisedParentId = (folder: SnippetFolder): number | null =>
+        folder.parent_id !== null && foldersById.has(folder.parent_id)
+            ? folder.parent_id
+            : null;
+    const childFolders = project.folders
+        .filter((folder) => normalisedParentId(folder) === parentFolderId)
+        .sort((left, right) => left.name.localeCompare(right.name));
+    const directSnippets = project.snippets
+        .filter((snippet) => {
+            const snippetFolderId =
+                snippet.folder_id !== null && foldersById.has(snippet.folder_id)
+                    ? snippet.folder_id
+                    : null;
+
+            return snippetFolderId === parentFolderId;
+        })
+        .sort((left, right) => left.filename.localeCompare(right.filename));
+
+    return [
+        ...childFolders.map((folder) => ({
+            id: `folder:${folder.id}`,
+            kind: 'folder' as const,
+            label: folder.name,
+            detail: `${brainFolderFileCount(project, folder.id)} files`,
+            children: ancestry.has(folder.id)
+                ? []
+                : brainProjectContents(
+                      project,
+                      folder.id,
+                      new Set(ancestry).add(folder.id),
+                  ),
+        })),
+        ...directSnippets.map((snippet) => brainSnippetItem(snippet)),
+    ];
+}
+
+function brainFolderFileCount(
+    project: SnippetProject,
+    folderId: number,
+): number {
+    const folderById = new Map(
+        project.folders.map((folder) => [folder.id, folder]),
+    );
+    const nestedFolderIds = new Set<number>([folderId]);
+    const folderQueue = [folderId];
+
+    for (let index = 0; index < folderQueue.length; index += 1) {
+        project.folders.forEach((folder) => {
+            if (
+                folder.parent_id === folderQueue[index] &&
+                !nestedFolderIds.has(folder.id) &&
+                folderById.has(folder.id)
+            ) {
+                nestedFolderIds.add(folder.id);
+                folderQueue.push(folder.id);
+            }
+        });
+    }
+
+    return project.snippets.filter(
+        (snippet) =>
+            snippet.folder_id !== null &&
+            nestedFolderIds.has(snippet.folder_id),
+    ).length;
+}
+
+function brainSnippetItem(snippet: Snippet): BrainFileBrowserItem {
+    return {
+        id: `snippet:${snippet.id}`,
+        kind: 'snippet',
+        label: snippet.filename,
+        detail: snippet.language,
+        children: [],
+    };
 }
 
 function availableLayout(

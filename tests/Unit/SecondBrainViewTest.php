@@ -56,7 +56,25 @@ test('second brain supports close inspection with stronger zoom controls', funct
         ->toContain('title="Zoom in to inspect individual connections"');
 });
 
-test('second brain supports category comparison without the large detail panel', function () {
+test('second brain uses a closable fixed detail panel only for selected nodes', function () {
+    $component = file_get_contents(
+        dirname(__DIR__, 2).'/resources/js/components/snippets/second-brain.tsx',
+    );
+
+    expect($component)
+        ->toContain('<BrainSelectionPanel')
+        ->toContain('validSelectedNodeId &&')
+        ->toContain('onClose={() => setSelectedNodeId(null)}')
+        ->toContain('aria-label={`${node.label} details`}')
+        ->toContain('<SyntaxHighlightedCode')
+        ->toContain('<BrainFileBrowser')
+        ->toContain('buildBrainFileBrowser(node, view)')
+        ->toContain("if (node.kind === 'category')")
+        ->toContain("if (node.kind === 'framework')")
+        ->not->toContain('<NodePeek');
+});
+
+test('second brain supports category comparison with the selected node drawer', function () {
     $component = file_get_contents(
         dirname(__DIR__, 2).'/resources/js/components/snippets/second-brain.tsx',
     );
@@ -65,7 +83,7 @@ test('second brain supports category comparison without the large detail panel',
         ->toContain("{ id: 'single', label: 'One'")
         ->toContain("{ id: 'split', label: 'Split'")
         ->toContain("{ id: 'quad', label: 'Four'")
-        ->toContain('<NodePeek')
+        ->toContain('<BrainSelectionPanel')
         ->toContain('categoryViews.map((categoryView)')
         ->toContain("{ value: 3, label: '3 hops' }")
         ->toContain("{ value: 6, label: '6 hops' }")
