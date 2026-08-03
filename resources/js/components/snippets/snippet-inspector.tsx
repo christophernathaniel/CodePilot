@@ -147,10 +147,12 @@ export function SnippetInspector({
                 </div>
                 <p className="mt-2 font-mono text-[8px] text-code-faint">
                     {snippet.usage.copies_30d} copies in 30 days ·{' '}
-                    {snippet.usage.copies_total} total
+                    {snippet.usage.views_30d} views in 30 days
                     {snippet.usage.last_copied_at
                         ? ` · last ${formatDate(snippet.usage.last_copied_at)}`
-                        : ''}
+                        : snippet.usage.last_viewed_at
+                          ? ` · last viewed ${formatDate(snippet.usage.last_viewed_at)}`
+                          : ''}
                 </p>
             </div>
 

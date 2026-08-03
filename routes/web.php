@@ -16,6 +16,7 @@ use App\Http\Controllers\SnippetController;
 use App\Http\Controllers\SnippetFavouriteController;
 use App\Http\Controllers\SnippetUsageController;
 use App\Http\Controllers\SnippetVariationController;
+use App\Http\Controllers\SnippetViewController;
 use App\Http\Controllers\VariablePresetController;
 use App\Http\Controllers\WorkspaceController;
 use Illuminate\Support\Facades\Route;
@@ -84,6 +85,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->name('snippets.favourite.update');
     Route::patch('snippets/{snippet}/move', MoveSnippetController::class)->name('snippets.move');
     Route::post('snippets/{snippet}/copies', SnippetUsageController::class)->name('snippets.copies.store');
+    Route::post('snippets/{snippet}/views', SnippetViewController::class)->name('snippets.views.store');
     Route::delete('snippets/{snippet}', [SnippetController::class, 'destroy'])->name('snippets.destroy');
     Route::patch('trash/snippets/{snippet}/restore', [SnippetController::class, 'restore'])
         ->withTrashed()

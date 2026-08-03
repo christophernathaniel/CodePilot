@@ -65,6 +65,10 @@ export type SnippetUsage = {
     copies_30d: number;
     copies_total: number;
     last_copied_at: string | null;
+    views_30d: number;
+    views_total: number;
+    last_viewed_at: string | null;
+    weighted_score: number;
     relative_score: number;
     indicator: -1 | 0 | 1 | 2 | 3;
 };

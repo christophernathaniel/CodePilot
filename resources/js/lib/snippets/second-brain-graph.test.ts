@@ -4,12 +4,14 @@ import type { LibraryCategory, Snippet, SnippetProject } from '@/types';
 import {
     buildSecondBrainCategoryViews,
     buildSecondBrainGraph,
+    filterBrainEdgesByViewport,
     filterSecondBrainGraphByDepth,
     findDirectionalBrainNode,
     focusedBrainPositions,
     resolveBrainCategorySelections,
     secondBrainHeight,
     secondBrainWidth,
+    zoomSecondBrainAtPoint,
 } from './second-brain-graph.ts';
 
 const snippet = (overrides: Partial<Snippet> = {}): Snippet => ({
@@ -61,6 +63,10 @@ const snippet = (overrides: Partial<Snippet> = {}): Snippet => ({
         copies_30d: 2,
         copies_total: 4,
         last_copied_at: null,
+        views_30d: 0,
+        views_total: 0,
+        last_viewed_at: null,
+        weighted_score: 2,
         relative_score: 1,
         indicator: 2,
     },
@@ -119,6 +125,15 @@ test('builds containment and semantic links for real workspace items', () => {
     assert.deepEqual(
         graph.nodes.find((node) => node.id === 'snippet:10')?.action,
         { type: 'snippet', snippetId: 10 },
+    );
+    assert.deepEqual(
+        graph.nodes.find((node) => node.id === 'snippet:10')
+            ?.connectionStrength,
+        1,
+    );
+    assert.equal(
+        graph.nodes.find((node) => node.id === 'snippet:10')?.isFavourite,
+        true,
     );
     assert.ok(graph.nodes.some((node) => node.id === 'tag:30'));
     assert.ok(graph.nodes.some((node) => node.id === 'framework:40'));
@@ -412,5 +427,62 @@ test('returns the complete graph for all depth and falls back to root safely', (
         filterSecondBrainGraphByDepth(graph, 'root', 3).nodes.map(
             (node) => node.id,
         ),
+    );
+});
+
+test('keeps relationship lines connected to a visible node', () => {
+    const edges = [
+        {
+            id: 'inside',
+            source: 'left',
+            target: 'right',
+            kind: 'hierarchy',
+        },
+        {
+            id: 'outside',
+            source: 'left',
+            target: 'far-away',
+            kind: 'hierarchy',
+        },
+        {
+            id: 'off-screen',
+            source: 'far-away',
+            target: 'further-away',
+            kind: 'hierarchy',
+        },
+    ] as const;
+    const positions = new Map([
+        ['left', { x: 10, y: 50 }],
+        ['right', { x: 90, y: 50 }],
+        ['far-away', { x: 130, y: 50 }],
+        ['further-away', { x: 150, y: 50 }],
+    ]);
+
+    assert.deepEqual(
+        filterBrainEdgesByViewport(edges, positions, {
+            minX: 0,
+            minY: 0,
+            maxX: 100,
+            maxY: 100,
+        }).map((edge) => edge.id),
+        ['inside', 'outside'],
+    );
+});
+
+test('zooms around the graph position below the pointer', () => {
+    assert.deepEqual(
+        zoomSecondBrainAtPoint({
+            zoom: 1,
+            viewCenter: { x: 600, y: 400 },
+            pointerX: 0.75,
+            pointerY: 0.25,
+            zoomDelta: 1,
+            minimumZoom: 0.7,
+            maximumZoom: 6,
+        }),
+        {
+            zoom: 2,
+            viewCenter: { x: 750, y: 300 },
+        },
     );
 });

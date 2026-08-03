@@ -194,10 +194,7 @@
 }
 
 .second-brain-node {
-    transform: translate(var(--brain-x), var(--brain-y));
-    transition:
-        transform 380ms cubic-bezier(0.22, 1, 0.36, 1),
-        opacity 240ms ease-out;
+    transition: opacity 240ms ease-out;
 }
 
 .second-brain-node--sway {
@@ -213,12 +210,11 @@
 @keyframes second-brain-node-sway {
     0%,
     100% {
-        transform: translate(var(--brain-x), var(--brain-y)) translate(0, 0);
+        translate: 0 0;
     }
 
     50% {
-        transform: translate(var(--brain-x), var(--brain-y))
-            translate(var(--brain-sway-x), var(--brain-sway-y));
+        translate: var(--brain-sway-x) var(--brain-sway-y);
     }
 }
 

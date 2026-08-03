@@ -174,3 +174,21 @@ test('workspace sidebars expose persistent accessible resize handles', function 
         ->toContain("event.key === 'Home'")
         ->toContain("event.key === 'End'");
 });
+
+test('workspace code editor persists an accessible word-wrap preference', function () {
+    $projectDirectory = dirname(__DIR__, 2);
+    $workspace = file_get_contents($projectDirectory.'/resources/js/pages/snippets/workspace.tsx');
+    $editor = file_get_contents($projectDirectory.'/resources/js/components/snippets/snippet-editor.tsx');
+    $chrome = file_get_contents($projectDirectory.'/resources/js/components/snippets/snippet-editor-chrome.tsx');
+
+    expect($workspace)
+        ->toContain('codepilot.workspace.word-wrap.v1.')
+        ->toContain('wordWrap={wordWrap}')
+        ->toContain('onWordWrapToggle={() =>')
+        ->and($chrome)
+        ->toContain("'Turn on word wrap'")
+        ->toContain('aria-pressed={wordWrap}')
+        ->and($editor)
+        ->toContain("wrap={wordWrap ? 'soft' : 'off'}")
+        ->toContain("wordWrap ? 'left-0' : 'left-14'");
+});

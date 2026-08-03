@@ -61,6 +61,7 @@ import {
     store as storeVariation,
     update as updateVariation,
 } from '@/actions/App/Http/Controllers/SnippetVariationController';
+import SnippetViewController from '@/actions/App/Http/Controllers/SnippetViewController';
 import {
     destroy as destroyPreset,
     store as storePreset,
@@ -195,6 +196,10 @@ type CopyUsagePayload = {
     selection_length: number;
 };
 
+type ViewUsagePayload = {
+    event_uuid: string;
+};
+
 type CopyTarget = {
     snippet: Snippet;
     variation: SnippetVariation;
@@ -301,6 +306,7 @@ export default function Workspace({
             storageKey: null,
             preferences: defaultEditorModePreferences,
         });
+    const [wordWrap, setWordWrap] = useState(false);
     const [cursor, setCursor] = useState({ line: 1, column: 1 });
     const [saving, setSaving] = useState(false);
     const [clipboardProcessing, setClipboardProcessing] = useState(false);
@@ -340,9 +346,11 @@ export default function Workspace({
         scope: 'full',
         selection_length: 0,
     });
+    const viewUsageRequest = useHttp<ViewUsagePayload>({ event_uuid: '' });
 
     const storageKey = `codepilot.workspace.tabs.${auth.user.id}`;
     const editorViewPreferencesStorageKey = `codepilot.workspace.editor-view-preferences.v1.${auth.user.id}`;
+    const wordWrapStorageKey = `codepilot.workspace.word-wrap.v1.${auth.user.id}`;
     const libraryPanelWidthStorageKey = `codepilot.workspace.library-panel-width.v1.${auth.user.id}`;
     const inspectorPanelWidthStorageKey = `codepilot.workspace.inspector-panel-width.v1.${auth.user.id}`;
 
@@ -458,6 +466,26 @@ export default function Workspace({
             }
         },
         [],
+    );
+    const recordView = useCallback(
+        async (snippet: Snippet) => {
+            viewUsageRequest.setData({ event_uuid: crypto.randomUUID() });
+
+            try {
+                await viewUsageRequest.post(
+                    SnippetViewController.url({ snippet: snippet.id }),
+                    {
+                        onSuccess: () =>
+                            router.reload({
+                                only: ['projects', 'standalone_snippets'],
+                            }),
+                    },
+                );
+            } catch {
+                // Viewing must remain instant if usage telemetry is unavailable.
+            }
+        },
+        [viewUsageRequest],
     );
     const openMegaSearch = useCallback(() => {
         if (megaSearchOpen) {
@@ -1248,10 +1276,18 @@ export default function Workspace({
             setWorkspaceView('editor');
             setMobilePanelOpen(false);
             setCursor({ line: 1, column: 1 });
+            void recordView(snippet);
 
             return true;
         },
-        [dirtySnippetIds, multiFileMode, openIds, pinnedIds, snippetById],
+        [
+            dirtySnippetIds,
+            multiFileMode,
+            openIds,
+            pinnedIds,
+            recordView,
+            snippetById,
+        ],
     );
 
     const openExplorerSnippet = useCallback(
@@ -1445,6 +1481,28 @@ export default function Workspace({
             return;
         }
     }, [editorViewPreferenceStorage, editorViewPreferencesStorageKey]);
+
+    useEffect(() => {
+        const frame = window.requestAnimationFrame(() => {
+            try {
+                setWordWrap(
+                    window.localStorage.getItem(wordWrapStorageKey) === 'true',
+                );
+            } catch {
+                setWordWrap(false);
+            }
+        });
+
+        return () => window.cancelAnimationFrame(frame);
+    }, [wordWrapStorageKey]);
+
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(wordWrapStorageKey, String(wordWrap));
+        } catch {
+            return;
+        }
+    }, [wordWrap, wordWrapStorageKey]);
 
     useEffect(() => {
         if (dirtySnippetIds.size === 0) {
@@ -3013,6 +3071,7 @@ export default function Workspace({
                 <section className="flex min-w-0 flex-1 flex-col bg-code-canvas">
                     {workspaceView === 'brain' ? (
                         <SecondBrain
+                            accountKey={auth.user.id}
                             libraryCategories={libraryCategories}
                             projects={projects}
                             standaloneSnippets={standaloneSnippets}
@@ -3094,6 +3153,7 @@ export default function Workspace({
                                                 'preview' &&
                                                 copiedText === renderedSource)
                                         }
+                                        wordWrap={wordWrap}
                                         onModeChange={changeEditorMode}
                                         onVariationSelect={selectVariation}
                                         onCreateVariation={() =>
@@ -3156,6 +3216,9 @@ export default function Workspace({
                                         onMultiFileModeToggle={
                                             toggleMultiFileMode
                                         }
+                                        onWordWrapToggle={() =>
+                                            setWordWrap((enabled) => !enabled)
+                                        }
                                     />
                                     {effectiveEditorMode === 'playback' &&
                                     activeSnippet.content_type === 'guide' ? (
@@ -3202,6 +3265,7 @@ export default function Workspace({
                                                 effectiveEditorMode ===
                                                 'preview'
                                             }
+                                            wordWrap={wordWrap}
                                             onChange={(value) => {
                                                 if (
                                                     effectiveEditorMode ===
@@ -3262,6 +3326,7 @@ export default function Workspace({
                                         line={cursor.line}
                                         column={cursor.column}
                                         variableCount={activeVariables.length}
+                                        wordWrap={wordWrap}
                                     />
                                 </div>
 

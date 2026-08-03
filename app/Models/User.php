@@ -83,6 +83,12 @@ class User extends Authenticatable implements PasskeyUser
         return $this->hasMany(SnippetCopyEvent::class);
     }
 
+    /** @return HasMany<SnippetViewEvent, $this> */
+    public function snippetViewEvents(): HasMany
+    {
+        return $this->hasMany(SnippetViewEvent::class);
+    }
+
     /** @return HasMany<SnippetVariation, $this> */
     public function snippetVariations(): HasMany
     {

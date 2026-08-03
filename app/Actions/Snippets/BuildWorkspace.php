@@ -76,15 +76,21 @@ final class BuildWorkspace
             ->withCount([
                 'copyEvents as copies_30d' => fn (Builder $query) => $query->where('created_at', '>=', now()->subDays(30)),
                 'copyEvents as copies_total',
+                'viewEvents as views_30d' => fn (Builder $query) => $query->where('created_at', '>=', now()->subDays(30)),
+                'viewEvents as views_total',
             ])
             ->withMax('copyEvents as last_copied_at', 'created_at')
+            ->withMax('viewEvents as last_viewed_at', 'created_at')
             ->orderBy('position')
             ->orderBy('filename')
             ->get()
             ->sortByDesc(fn (Snippet $snippet): bool => $this->isPinned('snippet', (string) $snippet->id))
             ->values();
 
-        $maximumRecentCopies = max(1, (int) $snippets->max('copies_30d'));
+        $maximumRecentUsageScore = max(
+            1,
+            (float) $snippets->max(fn (Snippet $snippet): float => $this->recentUsageScore($snippet)),
+        );
         $snippetsByProject = $snippets->whereNotNull('project_id')->groupBy('project_id');
 
         foreach ($projects as $project) {
@@ -113,12 +119,12 @@ final class BuildWorkspace
                     ->all(),
             ),
             'projects' => array_values(
-                $projects->map(fn (Project $project): array => $this->project($project, $maximumRecentCopies))->all(),
+                $projects->map(fn (Project $project): array => $this->project($project, $maximumRecentUsageScore))->all(),
             ),
             'standalone_snippets' => array_values(
                 $snippets
                     ->whereNull('project_id')
-                    ->map(fn (Snippet $snippet): array => $this->snippet($snippet, $maximumRecentCopies))
+                    ->map(fn (Snippet $snippet): array => $this->snippet($snippet, $maximumRecentUsageScore))
                     ->all(),
             ),
             'language_options' => $languageOptions,
@@ -264,7 +270,7 @@ final class BuildWorkspace
     }
 
     /** @return array<string, mixed> */
-    private function project(Project $project, int $maximumRecentCopies): array
+    private function project(Project $project, float $maximumRecentUsageScore): array
     {
         return [
             'id' => $project->id,
@@ -285,30 +291,33 @@ final class BuildWorkspace
                     'position' => $folder->position,
                 ])->all(),
             'snippets' => $project->snippets
-                ->map(fn (Snippet $snippet): array => $this->snippet($snippet, $maximumRecentCopies))
+                ->map(fn (Snippet $snippet): array => $this->snippet($snippet, $maximumRecentUsageScore))
                 ->all(),
         ];
     }
 
     /** @return array<string, mixed> */
-    private function snippet(Snippet $snippet, int $maximumRecentCopies): array
+    private function snippet(Snippet $snippet, float $maximumRecentUsageScore): array
     {
         $recentCopies = (int) $snippet->getAttribute('copies_30d');
         $totalCopies = (int) $snippet->getAttribute('copies_total');
-        $relativeScore = $recentCopies / $maximumRecentCopies;
+        $recentViews = (int) $snippet->getAttribute('views_30d');
+        $totalViews = (int) $snippet->getAttribute('views_total');
+        $weightedScore = $this->recentUsageScore($snippet);
+        $relativeScore = $weightedScore / $maximumRecentUsageScore;
         $relativeIndicator = match (true) {
             $relativeScore < 0.34 => 1,
             $relativeScore < 0.67 => 2,
             default => 3,
         };
         $volumeIndicator = match (true) {
-            $recentCopies < 3 => 1,
-            $recentCopies < 10 => 2,
+            $weightedScore < 3 => 1,
+            $weightedScore < 10 => 2,
             default => 3,
         };
         $indicator = match (true) {
-            $recentCopies === 0 && $totalCopies > 0 => -1,
-            $recentCopies === 0 => 0,
+            $weightedScore === 0.0 && ($totalCopies > 0 || $totalViews > 0) => -1,
+            $weightedScore === 0.0 => 0,
             default => min($relativeIndicator, $volumeIndicator),
         };
 
@@ -330,6 +339,10 @@ final class BuildWorkspace
                 'copies_30d' => $recentCopies,
                 'copies_total' => $totalCopies,
                 'last_copied_at' => $this->timestamp($snippet->getAttribute('last_copied_at')),
+                'views_30d' => $recentViews,
+                'views_total' => $totalViews,
+                'last_viewed_at' => $this->timestamp($snippet->getAttribute('last_viewed_at')),
+                'weighted_score' => round($weightedScore, 3),
                 'relative_score' => round($relativeScore, 3),
                 'indicator' => $indicator,
             ],
@@ -359,6 +372,16 @@ final class BuildWorkspace
                 ->map(fn (Framework $framework): array => $this->framework($framework))
                 ->all(),
         ];
+    }
+
+    private function recentUsageScore(Snippet $snippet): float
+    {
+        $recentCopies = (int) $snippet->getAttribute('copies_30d');
+        $recentViews = (int) $snippet->getAttribute('views_30d');
+
+        return $recentCopies
+            + min($recentViews, 8) * 0.2
+            + ($snippet->is_favourite ? 0.75 : 0.0);
     }
 
     /** @return array{id: int, name: string, slug: string, color: string, is_pinned: bool} */

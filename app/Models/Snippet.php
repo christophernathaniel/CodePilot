@@ -105,6 +105,12 @@ class Snippet extends Model
         return $this->hasMany(SnippetCopyEvent::class);
     }
 
+    /** @return HasMany<SnippetViewEvent, $this> */
+    public function viewEvents(): HasMany
+    {
+        return $this->hasMany(SnippetViewEvent::class);
+    }
+
     /** @return array<string, string> */
     protected function casts(): array
     {

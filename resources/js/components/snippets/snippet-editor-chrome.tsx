@@ -12,6 +12,7 @@ import {
     Plus,
     Save,
     TextCursorInput,
+    WrapText,
 } from 'lucide-react';
 import { SnippetFileIcon } from '@/components/snippets/snippet-file-icon';
 import {
@@ -38,6 +39,7 @@ export type SnippetEditorToolbarProps = {
     saving: boolean;
     copied: boolean;
     multiFileMode: boolean;
+    wordWrap: boolean;
     sections?: ParsedSnippetSection[];
     activeSectionKey?: string | null;
     onModeChange: (mode: EditorMode) => void;
@@ -50,6 +52,7 @@ export type SnippetEditorToolbarProps = {
     onCopySource: () => void;
     onSelectAll: () => void;
     onMultiFileModeToggle: () => void;
+    onWordWrapToggle: () => void;
 };
 
 export function SnippetEditorToolbar({
@@ -63,6 +66,7 @@ export function SnippetEditorToolbar({
     saving,
     copied,
     multiFileMode,
+    wordWrap,
     sections = [],
     activeSectionKey = null,
     onModeChange,
@@ -75,6 +79,7 @@ export function SnippetEditorToolbar({
     onCopySource,
     onSelectAll,
     onMultiFileModeToggle,
+    onWordWrapToggle,
 }: SnippetEditorToolbarProps) {
     const activeSection =
         sections.find((section) => section.key === activeSectionKey) ?? null;
@@ -120,6 +125,23 @@ export function SnippetEditorToolbar({
                     )}
                 >
                     <Files className="size-3.5" />
+                </button>
+                <button
+                    type="button"
+                    aria-label={
+                        wordWrap ? 'Turn off word wrap' : 'Turn on word wrap'
+                    }
+                    aria-pressed={wordWrap}
+                    title={
+                        wordWrap ? 'Turn off word wrap' : 'Turn on word wrap'
+                    }
+                    onClick={onWordWrapToggle}
+                    className={cn(
+                        'flex size-6 shrink-0 items-center justify-center rounded transition hover:bg-code-hover hover:text-code-text',
+                        wordWrap ? 'text-sky-300' : 'text-code-faint',
+                    )}
+                >
+                    <WrapText className="size-3.5" />
                 </button>
             </div>
 
@@ -326,6 +348,7 @@ export type SnippetEditorStatusProps = {
     line: number;
     column: number;
     variableCount: number;
+    wordWrap: boolean;
 };
 
 export function SnippetEditorStatus({
@@ -336,6 +359,7 @@ export function SnippetEditorStatus({
     line,
     column,
     variableCount,
+    wordWrap,
 }: SnippetEditorStatusProps) {
     return (
         <footer className="flex h-6 shrink-0 items-center gap-4 bg-code-panel px-3 font-mono text-[9px] text-code-faint">
@@ -352,6 +376,7 @@ export function SnippetEditorStatus({
                 Ln {line}, Col {column}
             </span>
             <span>Spaces: 4</span>
+            <span>{wordWrap ? 'Wrap: On' : 'Wrap: Off'}</span>
             {variableCount > 0 && <span>{variableCount} variables</span>}
             {activeSection && (
                 <span

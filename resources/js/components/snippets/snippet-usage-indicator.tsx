@@ -15,10 +15,10 @@ export function SnippetUsageIndicator({ usage, className }: Props) {
               : '+'.repeat(usage.indicator);
     const label =
         usage.indicator === -1
-            ? `Previously used, with no copies in the last 30 days (${usage.copies_total} total)`
+            ? `Previously used, with no activity in the last 30 days (${usage.copies_total} copies and ${usage.views_total} views total)`
             : usage.indicator === 0
-              ? 'Never copied'
-              : `${usage.copies_30d} copies in the last 30 days (${usage.copies_total} total)`;
+              ? 'No recent views or copies'
+              : `${usage.copies_30d} copies and ${usage.views_30d} views in the last 30 days`;
 
     return (
         <span

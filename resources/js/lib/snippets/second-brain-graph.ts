@@ -50,6 +50,8 @@ export type BrainNode = {
     size: number;
     childCount: number;
     connectionCount: number;
+    connectionStrength?: number;
+    isFavourite?: boolean;
     previewItems: string[];
     action: BrainNodeAction | null;
 };
@@ -73,6 +75,16 @@ export type BrainGraph = {
 };
 
 export type BrainPosition = { x: number; y: number };
+export type BrainViewport = {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+};
+export type BrainZoomState = {
+    zoom: number;
+    viewCenter: BrainPosition;
+};
 export type BrainDirection = 'up' | 'right' | 'down' | 'left';
 export type BrainGraphDepth = 3 | 4 | 5 | 6 | 'all';
 
@@ -531,6 +543,68 @@ export function filterSecondBrainGraphByDepth(
     };
 }
 
+export function filterBrainEdgesByViewport(
+    edges: readonly BrainEdge[],
+    positions: ReadonlyMap<string, BrainPosition>,
+    viewport: BrainViewport,
+): BrainEdge[] {
+    return edges.filter((edge) => {
+        const source = positions.get(edge.source);
+        const target = positions.get(edge.target);
+
+        if (source === undefined || target === undefined) {
+            return false;
+        }
+
+        return (
+            isBrainPositionInViewport(source, viewport) ||
+            isBrainPositionInViewport(target, viewport)
+        );
+    });
+}
+
+/**
+ * Changes the graph zoom while preserving the graph coordinate below the
+ * pointer. This makes wheel zoom feel anchored to the item being inspected
+ * instead of always pulling the view toward its centre.
+ */
+export function zoomSecondBrainAtPoint({
+    zoom,
+    viewCenter,
+    pointerX,
+    pointerY,
+    zoomDelta,
+    minimumZoom,
+    maximumZoom,
+}: {
+    zoom: number;
+    viewCenter: BrainPosition;
+    pointerX: number;
+    pointerY: number;
+    zoomDelta: number;
+    minimumZoom: number;
+    maximumZoom: number;
+}): BrainZoomState {
+    const nextZoom = clamp(zoom + zoomDelta, minimumZoom, maximumZoom);
+
+    if (nextZoom === zoom) {
+        return { zoom, viewCenter };
+    }
+
+    const graphPoint = {
+        x: viewCenter.x + (pointerX - 0.5) * (secondBrainWidth / zoom),
+        y: viewCenter.y + (pointerY - 0.5) * (secondBrainHeight / zoom),
+    };
+
+    return {
+        zoom: nextZoom,
+        viewCenter: {
+            x: graphPoint.x - (pointerX - 0.5) * (secondBrainWidth / nextZoom),
+            y: graphPoint.y - (pointerY - 0.5) * (secondBrainHeight / nextZoom),
+        },
+    };
+}
+
 export function focusedBrainPositions(
     graph: BrainGraph,
     focusNodeId: string | null,
@@ -649,6 +723,18 @@ export function brainNodeKindLabel(kind: BrainNodeKind): string {
         framework: 'Framework',
         language: 'Language',
     }[kind];
+}
+
+function isBrainPositionInViewport(
+    position: BrainPosition,
+    viewport: BrainViewport,
+): boolean {
+    return (
+        position.x >= viewport.minX &&
+        position.x <= viewport.maxX &&
+        position.y >= viewport.minY &&
+        position.y <= viewport.maxY
+    );
 }
 
 function layoutSegment({
@@ -852,6 +938,8 @@ function layoutSegment({
                         Math.max(0, snippet.usage.indicator) * 0.35,
                     childCount: snippet.variations.length,
                     connectionCount: 0,
+                    connectionStrength: snippet.usage.relative_score,
+                    isFavourite: snippet.is_favourite,
                     previewItems: detailItems.slice(0, 6),
                     action: { type: 'snippet', snippetId: snippet.id },
                 });

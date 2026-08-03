@@ -13,6 +13,7 @@ import { SyntaxHighlightedText } from '@/components/snippets/syntax-highlighted-
 import { useClipboard } from '@/hooks/use-clipboard';
 import { createClipboardSelection } from '@/lib/snippets/clipboard-selection';
 import type { ClipboardSelection } from '@/lib/snippets/clipboard-selection';
+import { cn } from '@/lib/utils';
 
 export type SnippetEditorHandle = {
     focus: () => void;
@@ -25,6 +26,7 @@ type Props = {
     language: string;
     readOnly?: boolean;
     preview?: boolean;
+    wordWrap?: boolean;
     activeClipboardName?: string | null;
     onChange: (value: string) => void;
     onSave: () => void;
@@ -46,6 +48,7 @@ export const SnippetEditor = forwardRef<SnippetEditorHandle, Props>(
             language,
             readOnly = false,
             preview = false,
+            wordWrap = false,
             activeClipboardName = null,
             onChange,
             onSave,
@@ -308,7 +311,10 @@ export const SnippetEditor = forwardRef<SnippetEditorHandle, Props>(
             >
                 <div
                     aria-hidden="true"
-                    className="pointer-events-none absolute inset-y-0 left-0 z-20 w-14 overflow-hidden border-r border-code-border/60 bg-code-canvas pt-4 pr-3 text-right font-mono text-[12px] leading-6 text-code-faint select-none"
+                    className={cn(
+                        'pointer-events-none absolute inset-y-0 left-0 z-20 w-14 overflow-hidden border-r border-code-border/60 bg-code-canvas pt-4 pr-3 text-right font-mono text-[12px] leading-6 text-code-faint select-none',
+                        wordWrap && 'hidden',
+                    )}
                 >
                     <div
                         style={{
@@ -323,10 +329,18 @@ export const SnippetEditor = forwardRef<SnippetEditorHandle, Props>(
 
                 <div
                     aria-hidden="true"
-                    className="pointer-events-none absolute inset-y-0 right-0 left-14 overflow-hidden"
+                    className={cn(
+                        'pointer-events-none absolute inset-y-0 right-0 overflow-hidden',
+                        wordWrap ? 'left-0' : 'left-14',
+                    )}
                 >
                     <pre
-                        className="min-h-full min-w-full py-4 pr-6 pl-4 font-mono text-[13px] leading-6 font-medium whitespace-pre text-code-text"
+                        className={cn(
+                            'min-h-full min-w-full py-4 pr-6 font-mono text-[13px] leading-6 font-medium text-code-text',
+                            wordWrap
+                                ? 'pl-4 break-words whitespace-pre-wrap'
+                                : 'pl-4 whitespace-pre',
+                        )}
                         style={{
                             tabSize: 4,
                             transform: `translate(${-scrollPosition.left}px, ${-scrollPosition.top}px)`,
@@ -341,6 +355,7 @@ export const SnippetEditor = forwardRef<SnippetEditorHandle, Props>(
                     ref={textareaRef}
                     value={value}
                     readOnly={readOnly}
+                    wrap={wordWrap ? 'soft' : 'off'}
                     spellCheck={false}
                     aria-label={
                         preview
@@ -374,7 +389,12 @@ export const SnippetEditor = forwardRef<SnippetEditorHandle, Props>(
                     onKeyUp={(event) =>
                         reportCursor(event.currentTarget, onCursorChange)
                     }
-                    className="absolute inset-0 z-10 size-full resize-none overflow-auto bg-transparent py-4 pr-6 pl-[4.5rem] font-mono text-[13px] leading-6 font-medium whitespace-pre text-transparent caret-code-text outline-none selection:bg-[#31506a]/75 disabled:cursor-not-allowed"
+                    className={cn(
+                        'absolute inset-0 z-10 size-full resize-none bg-transparent py-4 pr-6 font-mono text-[13px] leading-6 font-medium text-transparent caret-code-text outline-none selection:bg-[#31506a]/75 disabled:cursor-not-allowed',
+                        wordWrap
+                            ? 'overflow-x-hidden pl-4 break-words whitespace-pre-wrap'
+                            : 'overflow-auto pl-[4.5rem] whitespace-pre',
+                    )}
                     style={{
                         tabSize: 4,
                         WebkitTextFillColor: 'transparent',

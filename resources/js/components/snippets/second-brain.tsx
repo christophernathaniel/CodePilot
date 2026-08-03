@@ -2,6 +2,7 @@ import {
     BrainCircuit,
     Braces,
     Boxes,
+    ChevronLeft,
     ChevronDown,
     Columns2,
     FileCode2,
@@ -31,17 +32,20 @@ import type {
     WheelEvent as ReactWheelEvent,
 } from 'react';
 import { SyntaxHighlightedCode } from '@/components/snippets/syntax-highlighted-code';
+import { WorkspaceResizeHandle } from '@/components/snippets/workspace-resize-handle';
 import {
     brainNodeKindLabel,
     buildBrainAdjacency,
     buildSecondBrainCategoryViews,
     buildSecondBrainGraph,
+    filterBrainEdgesByViewport,
     filterSecondBrainGraphByDepth,
     findDirectionalBrainNode,
     focusedBrainPositions,
     resolveBrainCategorySelections,
     secondBrainHeight,
     secondBrainWidth,
+    zoomSecondBrainAtPoint,
 } from '@/lib/snippets/second-brain-graph';
 import type {
     BrainCategoryView,
@@ -53,6 +57,10 @@ import type {
     BrainNodeKind,
     BrainPosition,
 } from '@/lib/snippets/second-brain-graph';
+import {
+    clampWorkspacePanelWidth,
+    restoreWorkspacePanelWidth,
+} from '@/lib/snippets/workspace-panel-resize';
 import { cn } from '@/lib/utils';
 import type {
     LibraryCategory,
@@ -62,6 +70,7 @@ import type {
 } from '@/types';
 
 type Props = {
+    accountKey: number;
     libraryCategories: LibraryCategory[];
     projects: SnippetProject[];
     standaloneSnippets: Snippet[];
@@ -76,11 +85,13 @@ type Props = {
     ) => void;
 };
 
+const brainSelectionPanelDefaultWidth = 440;
+const brainSelectionPanelMinWidth = 280;
+const brainSelectionPanelMaxWidth = 640;
+
 type BrainLayout = 'single' | 'split' | 'quad';
 
 type GraphCustomProperties = CSSProperties & {
-    '--brain-x'?: string;
-    '--brain-y'?: string;
     '--brain-sway-x'?: string;
     '--brain-sway-y'?: string;
     '--brain-sway-delay'?: string;
@@ -103,6 +114,7 @@ type BrainEdgePath = {
     data: string;
     opacity: number;
     strokeWidth: number;
+    strokeDasharray?: string;
     emphasized: boolean;
 };
 
@@ -129,7 +141,8 @@ type BrainFileBrowserItem = {
 };
 
 const minimumBrainZoom = 0.7;
-const maximumBrainZoom = 3.25;
+const maximumBrainZoom = 6;
+const brainSemanticZoomThreshold = 4.5;
 const brainZoomStep = 0.25;
 const brainWheelZoomStep = 0.18;
 
@@ -223,6 +236,7 @@ const relationshipDepthOptions = [
 ] satisfies { value: BrainGraphDepth; label: string }[];
 
 export function SecondBrain({
+    accountKey,
     libraryCategories,
     projects,
     standaloneSnippets,
@@ -412,6 +426,7 @@ export function SecondBrain({
                     <BrainPane
                         key={`${index}:${view.key}`}
                         view={view}
+                        accountKey={accountKey}
                         query={query}
                         searchFocusRequest={searchFocusRequest}
                         compact={effectiveLayout !== 'single'}
@@ -491,6 +506,7 @@ function LayoutButton({
 }
 
 function BrainPane({
+    accountKey,
     view,
     query,
     searchFocusRequest,
@@ -506,6 +522,7 @@ function BrainPane({
     onRevealFolder,
     onBrowseFilter,
 }: {
+    accountKey: number;
     view: BrainCategoryView;
     query: string;
     searchFocusRequest: number;
@@ -521,6 +538,50 @@ function BrainPane({
     onRevealFolder: Props['onRevealFolder'];
     onBrowseFilter: Props['onBrowseFilter'];
 }) {
+    const selectionPanelWidthStorageKey = `codepilot.second-brain.selection-panel-width.v1.${accountKey}`;
+    const [selectionPanelWidth, setSelectionPanelWidth] = useState(
+        brainSelectionPanelDefaultWidth,
+    );
+    const displayedSelectionPanelWidth = clampWorkspacePanelWidth(
+        selectionPanelWidth,
+        compact ? 240 : brainSelectionPanelMinWidth,
+        compact ? 420 : brainSelectionPanelMaxWidth,
+    );
+
+    useEffect(() => {
+        const frame = window.requestAnimationFrame(() => {
+            try {
+                setSelectionPanelWidth(
+                    restoreWorkspacePanelWidth(
+                        window.localStorage.getItem(
+                            selectionPanelWidthStorageKey,
+                        ),
+                        brainSelectionPanelDefaultWidth,
+                        compact ? 240 : brainSelectionPanelMinWidth,
+                        compact ? 420 : brainSelectionPanelMaxWidth,
+                    ),
+                );
+            } catch {
+                setSelectionPanelWidth(brainSelectionPanelDefaultWidth);
+            }
+        });
+
+        return () => window.cancelAnimationFrame(frame);
+    }, [compact, selectionPanelWidthStorageKey]);
+
+    const persistSelectionPanelWidth = useCallback(
+        (width: number) => {
+            try {
+                window.localStorage.setItem(
+                    selectionPanelWidthStorageKey,
+                    String(width),
+                );
+            } catch {
+                return;
+            }
+        },
+        [selectionPanelWidthStorageKey],
+    );
     const graph = useMemo(
         () =>
             buildSecondBrainGraph({
@@ -589,6 +650,23 @@ function BrainPane({
         () => focusedBrainPositions(visibleGraph, focusNodeId, adjacency),
         [adjacency, focusNodeId, visibleGraph],
     );
+    const viewportWidth = secondBrainWidth / zoom;
+    const viewportHeight = secondBrainHeight / zoom;
+    const viewport = useMemo(
+        () => ({
+            minX: viewCenter.x - viewportWidth / 2,
+            minY: viewCenter.y - viewportHeight / 2,
+            maxX: viewCenter.x + viewportWidth / 2,
+            maxY: viewCenter.y + viewportHeight / 2,
+        }),
+        [viewCenter, viewportHeight, viewportWidth],
+    );
+    const viewBox = `${viewport.minX} ${viewport.minY} ${viewportWidth} ${viewportHeight}`;
+    const viewportEdges = useMemo(
+        () =>
+            filterBrainEdgesByViewport(visibleGraph.edges, positions, viewport),
+        [positions, viewport, visibleGraph.edges],
+    );
     const normalizedQuery = query.trim().toLocaleLowerCase();
     const matchingNodeIds = useMemo(() => {
         if (normalizedQuery.length === 0) {
@@ -614,7 +692,8 @@ function BrainPane({
     const edgePaths = useMemo(
         () =>
             buildBrainEdgePaths({
-                edges: visibleGraph.edges,
+                edges: viewportEdges,
+                nodes: nodeById,
                 positions,
                 focusNodeId,
                 matchingNodeIds,
@@ -623,25 +702,28 @@ function BrainPane({
         [
             focusNodeId,
             matchingNodeIds,
+            nodeById,
             normalizedQuery.length,
             positions,
-            visibleGraph.edges,
+            viewportEdges,
         ],
     );
     const signals = useMemo(
-        () => buildBrainSignals(visibleGraph.edges, positions),
-        [positions, visibleGraph.edges],
+        () => buildBrainSignals(viewportEdges, positions),
+        [positions, viewportEdges],
     );
     const edgeFlickers = useMemo(
-        () => buildBrainEdgeFlickers(visibleGraph.edges, positions),
-        [positions, visibleGraph.edges],
+        () => buildBrainEdgeFlickers(viewportEdges, positions),
+        [positions, viewportEdges],
     );
     const focusedNeighbours = focusNodeId
         ? (adjacency.get(focusNodeId) ?? new Set<string>())
         : new Set<string>();
-    const viewportWidth = secondBrainWidth / zoom;
-    const viewportHeight = secondBrainHeight / zoom;
-    const viewBox = `${viewCenter.x - viewportWidth / 2} ${viewCenter.y - viewportHeight / 2} ${viewportWidth} ${viewportHeight}`;
+    const nodeZoomScale =
+        zoom <= brainSemanticZoomThreshold
+            ? Math.min(1, zoom ** -1.12)
+            : brainSemanticZoomThreshold ** -1.12 *
+              (zoom / brainSemanticZoomThreshold) ** -0.6;
 
     const selectNode = useCallback((nodeId: string) => {
         setSelectedNodeId((current) => (current === nodeId ? null : nodeId));
@@ -852,16 +934,31 @@ function BrainPane({
 
     const handleWheel = (event: ReactWheelEvent<SVGSVGElement>) => {
         event.preventDefault();
-        setZoom((current) =>
-            clamp(
-                current +
-                    (event.deltaY < 0
-                        ? brainWheelZoomStep
-                        : -brainWheelZoomStep),
-                minimumBrainZoom,
-                maximumBrainZoom,
-            ),
+
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const pointerX = clamp(
+            (event.clientX - bounds.left) / Math.max(1, bounds.width),
+            0,
+            1,
         );
+        const pointerY = clamp(
+            (event.clientY - bounds.top) / Math.max(1, bounds.height),
+            0,
+            1,
+        );
+        const nextView = zoomSecondBrainAtPoint({
+            zoom,
+            viewCenter,
+            pointerX,
+            pointerY,
+            zoomDelta:
+                event.deltaY < 0 ? brainWheelZoomStep : -brainWheelZoomStep,
+            minimumZoom: minimumBrainZoom,
+            maximumZoom: maximumBrainZoom,
+        });
+
+        setZoom(nextView.zoom);
+        setViewCenter(nextView.viewCenter);
     };
 
     const resetView = () => {
@@ -978,7 +1075,10 @@ function BrainPane({
                         width="400%"
                         height="400%"
                     >
-                        <feGaussianBlur stdDeviation="4" result="blur" />
+                        <feGaussianBlur
+                            stdDeviation={4 * nodeZoomScale}
+                            result="blur"
+                        />
                         <feMerge>
                             <feMergeNode in="blur" />
                             <feMergeNode in="SourceGraphic" />
@@ -998,6 +1098,7 @@ function BrainPane({
                                 edgePalette[edgePath.kind],
                             )}
                             strokeWidth={edgePath.strokeWidth}
+                            strokeDasharray={edgePath.strokeDasharray}
                             strokeLinecap="round"
                             vectorEffect="non-scaling-stroke"
                         />
@@ -1056,6 +1157,22 @@ function BrainPane({
                               : isMatch
                                 ? 1.2
                                 : 1;
+                        const nodeRadius = node.size * scale * nodeZoomScale;
+                        const labelOffset =
+                            (isFocused ? 16 : 12) * nodeZoomScale;
+                        const labelFontSize =
+                            (isFocused ? 10 : 9) * nodeZoomScale;
+                        const label = shortLabel(node.label, compact ? 22 : 28);
+                        const labelPaddingX = 4 * nodeZoomScale;
+                        const labelPaddingY = 2 * nodeZoomScale;
+                        const labelWidth = Math.max(
+                            labelFontSize * 2.4,
+                            label.length * labelFontSize * 0.68 +
+                                labelPaddingX * 2,
+                        );
+                        const labelHeight = labelFontSize + labelPaddingY * 2;
+                        const labelCenterY =
+                            nodeRadius + labelOffset + labelHeight / 2;
                         const palette = nodePalette[node.kind];
                         const showLabel =
                             isFocused ||
@@ -1070,8 +1187,6 @@ function BrainPane({
                             ].includes(node.kind);
                         const sway = brainNodeSway(node);
                         const style: GraphCustomProperties = {
-                            '--brain-x': `${position.x}px`,
-                            '--brain-y': `${position.y}px`,
                             ...sway,
                             opacity,
                         };
@@ -1099,6 +1214,7 @@ function BrainPane({
                                 aria-label={`${brainNodeKindLabel(node.kind)}: ${node.label}. ${node.description}`}
                                 aria-pressed={isSelected}
                                 style={style}
+                                transform={`translate(${position.x} ${position.y})`}
                                 onMouseEnter={() => setHoveredNodeId(node.id)}
                                 onMouseLeave={() => setHoveredNodeId(null)}
                                 onFocus={() => setHoveredNodeId(node.id)}
@@ -1126,18 +1242,21 @@ function BrainPane({
                                     {node.label} · {node.description}
                                 </title>
                                 <circle
-                                    r={Math.max(16, node.size * 2.1)}
+                                    r={
+                                        Math.max(16, node.size * 2.1) *
+                                        nodeZoomScale
+                                    }
                                     className="fill-transparent"
                                 />
                                 {(isFocused || isSelected) && (
                                     <circle
-                                        r={node.size * 2.05}
+                                        r={node.size * 2.05 * nodeZoomScale}
                                         className="fill-sky-300/10 stroke-sky-200/45"
                                         strokeWidth={1}
                                     />
                                 )}
                                 <circle
-                                    r={node.size * scale}
+                                    r={nodeRadius}
                                     filter={
                                         isFocused
                                             ? `url(#${glowId})`
@@ -1153,24 +1272,32 @@ function BrainPane({
                                     }
                                 />
                                 {showLabel && (
-                                    <text
-                                        y={
-                                            node.size * scale +
-                                            (isFocused ? 16 : 12)
-                                        }
-                                        textAnchor="middle"
-                                        className={cn(
-                                            'pointer-events-none fill-current [stroke:#07111d] [stroke-width:4px] text-[9px] font-medium tracking-[0.01em] [paint-order:stroke]',
-                                            palette.label,
-                                            isFocused &&
-                                                'text-[10px] font-semibold',
-                                        )}
-                                    >
-                                        {shortLabel(
-                                            node.label,
-                                            compact ? 22 : 28,
-                                        )}
-                                    </text>
+                                    <g pointerEvents="none">
+                                        <rect
+                                            x={-labelWidth / 2}
+                                            y={labelCenterY - labelHeight / 2}
+                                            width={labelWidth}
+                                            height={labelHeight}
+                                            rx={labelHeight / 2}
+                                            className="fill-[#07111d]/90"
+                                        />
+                                        <text
+                                            y={labelCenterY}
+                                            textAnchor="middle"
+                                            dominantBaseline="middle"
+                                            style={{
+                                                fontSize: `${labelFontSize}px`,
+                                            }}
+                                            className={cn(
+                                                'fill-current text-[9px] font-medium tracking-[0.01em]',
+                                                palette.label,
+                                                isFocused &&
+                                                    'text-[10px] font-semibold',
+                                            )}
+                                        >
+                                            {label}
+                                        </text>
+                                    </g>
                                 )}
                             </g>
                         );
@@ -1182,9 +1309,13 @@ function BrainPane({
                 <BrainSelectionPanel
                     node={nodeById.get(validSelectedNodeId)!}
                     view={view}
-                    compact={compact}
+                    width={displayedSelectionPanelWidth}
+                    minWidth={compact ? 240 : brainSelectionPanelMinWidth}
+                    maxWidth={compact ? 420 : brainSelectionPanelMaxWidth}
                     onClose={() => setSelectedNodeId(null)}
                     onSelectNode={selectNode}
+                    onResize={setSelectionPanelWidth}
+                    onResizeEnd={persistSelectionPanelWidth}
                 />
             )}
 
@@ -1253,15 +1384,23 @@ function BrainPane({
 function BrainSelectionPanel({
     node,
     view,
-    compact,
+    width,
+    minWidth,
+    maxWidth,
     onClose,
     onSelectNode,
+    onResize,
+    onResizeEnd,
 }: {
     node: BrainNode;
     view: BrainCategoryView;
-    compact: boolean;
+    width: number;
+    minWidth: number;
+    maxWidth: number;
     onClose: () => void;
     onSelectNode: (nodeId: string) => void;
+    onResize: (width: number) => void;
+    onResizeEnd: (width: number) => void;
 }) {
     const Icon = nodeIcons[node.kind];
     const selectedSnippet = resolveBrainSnippet(node, view);
@@ -1274,15 +1413,26 @@ function BrainSelectionPanel({
         () => buildBrainFileBrowser(node, view),
         [node, view],
     );
+    const parent = buildBrainParent(node, view);
 
     return (
         <aside
+            id="second-brain-selection-panel"
             aria-label={`${node.label} details`}
-            className={cn(
-                'absolute inset-y-0 right-0 z-30 flex w-[min(28rem,calc(100%-0.75rem))] min-w-0 flex-col border-l border-sky-700/60 bg-[#071321]/97 shadow-[-18px_0_42px_rgba(0,0,0,0.34)] backdrop-blur-md',
-                compact && 'w-[min(22rem,calc(100%-0.5rem))]',
-            )}
+            style={{ width: `${width}px`, maxWidth: 'calc(100% - 0.75rem)' }}
+            className="absolute inset-y-0 right-0 z-30 flex min-w-0 flex-col border-l border-sky-700/60 bg-[#071321]/97 shadow-[-18px_0_42px_rgba(0,0,0,0.34)] backdrop-blur-md"
         >
+            <WorkspaceResizeHandle
+                label="Resize selected item details"
+                controls="second-brain-selection-panel"
+                side="right"
+                width={width}
+                minWidth={minWidth}
+                maxWidth={maxWidth}
+                onResize={onResize}
+                onResizeEnd={onResizeEnd}
+                className="absolute inset-y-0 left-0 z-40"
+            />
             <header className="flex shrink-0 items-start gap-2.5 border-b border-sky-900/70 px-3 py-3">
                 <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-sky-300/8 text-sky-300/75">
                     <Icon className="size-4" />
@@ -1308,6 +1458,18 @@ function BrainSelectionPanel({
                     <X className="size-3.5" />
                 </button>
             </header>
+
+            {parent && (
+                <button
+                    type="button"
+                    aria-label={`Back to ${parent.label}`}
+                    onClick={() => onSelectNode(parent.id)}
+                    className="focus-visible:outline-inset flex shrink-0 items-center gap-1.5 border-b border-sky-900/55 px-3 py-2 text-left text-[9px] text-sky-200/60 transition hover:bg-sky-300/8 hover:text-sky-50 focus-visible:outline-2 focus-visible:outline-sky-400"
+                >
+                    <ChevronLeft className="size-3.5 shrink-0" />
+                    <span className="truncate">Back to {parent.label}</span>
+                </button>
+            )}
 
             {selectedSnippet && variation ? (
                 <section className="flex min-h-0 flex-1 flex-col">
@@ -1417,6 +1579,101 @@ function LegendDot({ className, label }: { className: string; label: string }) {
             {label}
         </span>
     );
+}
+
+function buildBrainParent(
+    node: BrainNode,
+    view: BrainCategoryView,
+): { id: string; label: string } | null {
+    const projectById = new Map(
+        view.projects.map((project) => [project.id, project]),
+    );
+
+    if (node.kind === 'snippet') {
+        const snippet = resolveBrainSnippet(node, view);
+
+        if (!snippet) {
+            return null;
+        }
+
+        if (snippet.project_id === null) {
+            return { id: 'collection:standalone', label: 'Standalone files' };
+        }
+
+        const project = projectById.get(snippet.project_id);
+
+        if (!project) {
+            return null;
+        }
+
+        if (
+            snippet.folder_id !== null &&
+            project.folders.some((folder) => folder.id === snippet.folder_id)
+        ) {
+            const folder = project.folders.find(
+                (candidate) => candidate.id === snippet.folder_id,
+            );
+
+            return folder
+                ? { id: `folder:${folder.id}`, label: folder.name }
+                : null;
+        }
+
+        return { id: `project:${project.id}`, label: project.name };
+    }
+
+    if (node.kind === 'folder') {
+        const folderId = Number(node.id.replace('folder:', ''));
+        const project = view.projects.find((candidate) =>
+            candidate.folders.some((folder) => folder.id === folderId),
+        );
+        const folder = project?.folders.find(
+            (candidate) => candidate.id === folderId,
+        );
+
+        if (!project || !folder) {
+            return null;
+        }
+
+        if (
+            folder.parent_id !== null &&
+            project.folders.some(
+                (candidate) => candidate.id === folder.parent_id,
+            )
+        ) {
+            const parentFolder = project.folders.find(
+                (candidate) => candidate.id === folder.parent_id,
+            );
+
+            return parentFolder
+                ? { id: `folder:${parentFolder.id}`, label: parentFolder.name }
+                : null;
+        }
+
+        return { id: `project:${project.id}`, label: project.name };
+    }
+
+    if (node.kind === 'project') {
+        const project = projectById.get(
+            Number(node.id.replace('project:', '')),
+        );
+
+        if (!project) {
+            return { id: 'root', label: 'Second brain' };
+        }
+
+        if (project.library_category_id !== null) {
+            const category = view.libraryCategories.find(
+                (candidate) => candidate.id === project.library_category_id,
+            );
+
+            if (category) {
+                return { id: `category:${category.id}`, label: category.name };
+            }
+        }
+    }
+
+    return node.kind === 'root' ? null : { id: 'root', label: 'Second brain' };
 }
 
 function resolveBrainSnippet(
@@ -1650,12 +1907,14 @@ function availableLayout(
 
 function buildBrainEdgePaths({
     edges,
+    nodes,
     positions,
     focusNodeId,
     matchingNodeIds,
     hasQuery,
 }: {
     edges: BrainEdge[];
+    nodes: ReadonlyMap<string, BrainNode>;
     positions: ReadonlyMap<string, BrainPosition>;
     focusNodeId: string | null;
     matchingNodeIds: ReadonlySet<string>;
@@ -1683,7 +1942,24 @@ function buildBrainEdgePaths({
             matchingNodeIds.has(edge.source) ||
             matchingNodeIds.has(edge.target);
         const emphasized = hasFocus ? touchesFocus : hasQuery && touchesMatch;
-        const groupId = `${edge.kind}:${emphasized ? 'emphasized' : 'base'}`;
+        const connectedSnippets = [
+            nodes.get(edge.source),
+            nodes.get(edge.target),
+        ].filter((node): node is BrainNode => node?.kind === 'snippet');
+        const connectionStrength = Math.max(
+            0,
+            ...connectedSnippets.map((node) => node.connectionStrength ?? 0),
+        );
+        const isFavouriteConnection = connectedSnippets.some(
+            (node) => node.isFavourite === true,
+        );
+        const strengthTier =
+            connectionStrength >= 0.67
+                ? 'strong'
+                : connectionStrength >= 0.34
+                  ? 'medium'
+                  : 'light';
+        const groupId = `${edge.kind}:${emphasized ? 'emphasized' : 'base'}:${strengthTier}:${isFavouriteConnection ? 'favourite' : 'standard'}`;
         const existingGroup = pathGroups.get(groupId);
         const pathGroup =
             existingGroup ??
@@ -1697,11 +1973,15 @@ function buildBrainEdgePaths({
                     hasQuery,
                     touchesMatch,
                 }),
-                strokeWidth: touchesFocus
-                    ? 1.8
-                    : edge.kind === 'hierarchy'
-                      ? 1.05
-                      : 0.9,
+                strokeWidth:
+                    (touchesFocus
+                        ? 1.8
+                        : edge.kind === 'hierarchy'
+                          ? 1.05
+                          : 0.9) +
+                    connectionStrength * 0.7 +
+                    (isFavouriteConnection ? 0.65 : 0),
+                strokeDasharray: isFavouriteConnection ? '11 5' : undefined,
                 emphasized,
                 commands: [],
             } satisfies MutableBrainEdgePath);
